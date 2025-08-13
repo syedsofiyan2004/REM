@@ -1,4 +1,4 @@
-import base64, json, os, re, html
+import base64, json, os, re, html, time, threading, random
 import logging
 from collections import defaultdict, deque
 from pathlib import Path
@@ -43,6 +43,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/")
 def root():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
 
 # ---- rolling memory (per session_id) ----------------------------------------
 MAX_TURNS = 10  # user+assistant pairs
@@ -281,13 +285,72 @@ def chat_stream(payload: ChatStreamIn):
 
     return StreamingResponse(gen(), media_type="application/jsonl")
 
+_TTS_MAX_CONCURRENCY = int(os.getenv("TTS_MAX_CONCURRENCY", "3"))
+_tts_gate = threading.Semaphore(_TTS_MAX_CONCURRENCY)
+
+# Simple in-memory cache: text -> (expires_epoch, audio_b64, marks)
+_TTS_TTL_SECONDS = int(os.getenv("TTS_CACHE_TTL", "900"))  # 15 minutes
+_tts_cache: Dict[str, Tuple[float, str, list]] = {}
+_tts_cache_lock = threading.Lock()
+
+def _tts_cache_get(key: str):
+    now = time.time()
+    with _tts_cache_lock:
+        rec = _tts_cache.get(key)
+        if not rec:
+            return None
+        exp, audio_b64, marks = rec
+        if exp < now:
+            _tts_cache.pop(key, None)
+            return None
+        return audio_b64, marks
+
+def _tts_cache_put(key: str, audio_b64: str, marks: list):
+    with _tts_cache_lock:
+        _tts_cache[key] = (time.time() + _TTS_TTL_SECONDS, audio_b64, marks)
+
+def _retry_sleep(attempt: int):
+    base = 0.25 * (2 ** attempt)
+    time.sleep(base + random.random() * 0.2)
+
 @app.post("/api/tts")
 def tts(payload: TTSIn):
     txt = payload.text.strip()
     if not txt:
         raise HTTPException(400, "Empty text")
     try:
-        audio_b64, marks = polly_tts_with_visemes(txt)
+        # Cache by normalized text
+        key = re.sub(r"\s+", " ", txt).strip().lower()
+        cached = _tts_cache_get(key)
+        if cached:
+            audio_b64, marks = cached
+            return {"audio_b64": audio_b64, "marks": marks}
+
+        acquired = _tts_gate.acquire(timeout=10)
+        if not acquired:
+            raise HTTPException(429, "TTS busy, try again shortly")
+        try:
+            # Retry Polly on throttling / transient failures
+            last_err = None
+            for attempt in range(3):
+                try:
+                    audio_b64, marks = polly_tts_with_visemes(txt)
+                    _tts_cache_put(key, audio_b64, marks)
+                    break
+                except ClientError as e:
+                    code = e.response.get("Error", {}).get("Code", "ClientError")
+                    if code in {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}:
+                        last_err = e; _retry_sleep(attempt); continue
+                    raise
+                except Exception as e:
+                    last_err = e; _retry_sleep(attempt)
+            else:
+                raise last_err or RuntimeError("TTS retries exhausted")
+        finally:
+            try:
+                _tts_gate.release()
+            except Exception:
+                pass
         return {"audio_b64": audio_b64, "marks": marks}
     except ClientError as e:
         err = e.response.get("Error", {})
