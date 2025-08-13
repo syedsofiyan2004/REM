@@ -1,0 +1,9 @@
+{
+  "name": "rem-vercel-api",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "dependencies": {
+    "@aws-sdk/client-polly": "^3.620.0"
+  }
+}

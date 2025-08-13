@@ -1,12 +1,6 @@
 {
   "version": 2,
-  "routes": [
-    { "src": "/api/chat", "dest": "/api/chat.js" },
-    { "src": "/api/chat_stream", "dest": "/api/chat_stream.js" },
-    { "src": "/api/tts", "dest": "/api/tts.js" },
-
-    { "src": "/static/(.*)", "dest": "/app/static/$1" },
-    { "src": "/", "dest": "/app/static/index.html" },
-    { "src": "/(.*)", "dest": "/app/static/$1" }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "http://ec2-3-108-218-17.ap-south-1.compute.amazonaws.com/$1" }
   ]
 }

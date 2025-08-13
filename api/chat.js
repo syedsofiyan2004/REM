@@ -1,8 +1,20 @@
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
+    const base = process.env.BACKEND_BASE_URL;
+    if (base) {
+      // Proxy to your FastAPI backend
+      const r = await fetch(`${base.replace(/\/$/, '')}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body || {})
+      });
+      const data = await r.json();
+      return res.status(r.status).json(data);
+    }
+
     const { text = '', session_id = 'vercel' } = req.body || {};
-    // Simple local reply for demo (no AWS). Adjust if you want to call a backend.
+    // Local fallback (no AWS)
     const lower = text.trim().toLowerCase();
     let reply = 'I\'m here.';
     if (!text.trim()) reply = "I\'m here.";
