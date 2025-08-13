@@ -1,6 +1,7 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/(.*)", "destination": "http://ec2-3-108-218-17.ap-south-1.compute.amazonaws.com/$1" }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "http://ec2-3-108-218-17.ap-south-1.compute.amazonaws.com/api/$1" },
+    { "src": "/(.*)", "dest": "http://ec2-3-108-218-17.ap-south-1.compute.amazonaws.com/$1" }
   ]
 }
