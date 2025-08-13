@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "routes": [
+    { "src": "/api/chat", "dest": "/api/chat.js" },
+    { "src": "/api/chat_stream", "dest": "/api/chat_stream.js" },
+    { "src": "/api/tts", "dest": "/api/tts.js" },
+
+    { "src": "/static/(.*)", "dest": "/app/static/$1" },
+    { "src": "/", "dest": "/app/static/index.html" },
+    { "src": "/(.*)", "dest": "/app/static/$1" }
+  ]
+}

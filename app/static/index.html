@@ -39,6 +39,9 @@
        max-width:min(70vw,900px); text-align:center; padding:10px 14px; border-radius:12px;
        background:#0e1627cc; border:1px solid #23314a; color:#e9f2ff; opacity:0; transition:opacity .25s ease}
   #subtitle.show{ opacity:1 }
+  #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
+    padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#b9c6db;
+    font-size:12.5px}
 </style>
 </head>
 <body>
@@ -46,6 +49,7 @@
   <div id="badge">Rem</div>
   <button id="hambtn">☰</button>
   <div id="subtitle" aria-live="polite"></div>
+  <div id="disclaimer">Preview build: This experience is under active development and may be imperfect.</div>
 
   <aside id="panel">
     <div style="font-weight:700;letter-spacing:.4px">Chat</div>

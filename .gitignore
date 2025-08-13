@@ -5,3 +5,4 @@ __init__.py
 Dockerfile
 infra
 README_DEPLOY.md
+.dockerignore
