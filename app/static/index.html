@@ -324,12 +324,18 @@ async function ttsFull(text){
 
 /* ====== Lip-sync (visemes + RMS fallback) ====== */
 let speaking=false, currentAudio=null, audioCtx=null, raf=null;
+let curStreamCtrl = null; // abort controller for active chat_stream
 function stopSpeaking(){
   speaking=false;
   try{ if(currentAudio){ currentAudio.pause(); currentAudio.src=''; } }catch{}
   if(raf) cancelAnimationFrame(raf); currentAudio=null;
   setJawEnergy(0);
   if(audioCtx){ try{ audioCtx.close(); }catch{} audioCtx=null; }
+  try{ if(window.speechSynthesis){ window.speechSynthesis.cancel(); } }catch{}
+  // Flush any queued utterances so a new prompt starts fresh
+  try{ speakQ = Promise.resolve(); }catch{}
+  // Abort any active streaming request so it doesn't enqueue more sentences
+  try{ if(curStreamCtrl){ curStreamCtrl.abort(); curStreamCtrl = null; } }catch{}
 }
 const VMAP = { "sil":0.00, "p":0.15, "t":0.2, "f":0.22, "k":0.22, "S":0.2, "T":0.22, "r":0.28, "w":0.3,
                "e":0.55, "i":0.6, "o":0.75, "u":0.78, "@":0.5, "a":0.95 };
@@ -362,8 +368,9 @@ async function playAudioWithVisemes(b64, marks){
       audio.onplay = ()=>{ started=true; };
       audio.onerror = ()=> cleanup(false);
       const startWatch = setTimeout(()=>{ if(!started) cleanup(false); }, 2500);
-      audio.onended = ()=>{ clearTimeout(startWatch); cleanup(true); };
-      audio.onpause = ()=>{ /* may pause at end */ };
+  audio.onended = ()=>{ clearTimeout(startWatch); cleanup(true); };
+  // If we interrupt (stopSpeaking pauses audio), treat as a clean end so the queue continues
+  audio.onpause = ()=>{ clearTimeout(startWatch); cleanup(true); };
       audio.play().catch(()=> cleanup(false));
 
       let idx=0, target=0.2, level=0.15;
@@ -456,7 +463,9 @@ async function talk(text){
 
   let buf=''; const dec=new TextDecoder();
   try{
-    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
+    // Create a fresh controller for this stream and store it globally for interruption
+    const ctrl = new AbortController(); curStreamCtrl = ctrl;
+    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: ctrl.signal});
     if(!r.ok){ throw new Error('stream-status-'+r.status); }
     const reader = r.body.getReader(); let leftover='';
     while(true){
@@ -484,6 +493,10 @@ async function talk(text){
     await speakQ;
   }catch(e){
     console.error(e);
+    if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){
+      // Interrupted: do not fallback or enqueue; just stop cleanly
+      return;
+    }
     // Small backoff then fallback to non-streaming
     await new Promise(res=>setTimeout(res, 250));
     const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
