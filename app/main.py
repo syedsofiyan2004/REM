@@ -28,8 +28,15 @@ POLLY_VOICE    = os.getenv("POLLY_VOICE",    "Ruth")   # will auto-fallback if r
 POLLY_RATE     = os.getenv("POLLY_RATE",     "medium")
 POLLY_PITCH    = os.getenv("POLLY_PITCH",    "+4%")
 
-bedrock = boto3.client("bedrock-runtime", config=Config(region_name=BEDROCK_REGION))
-polly   = boto3.client("polly",            config=Config(region_name=POLLY_REGION))
+# Add adaptive retries on clients
+bedrock = boto3.client(
+    "bedrock-runtime",
+    config=Config(region_name=BEDROCK_REGION, retries={"max_attempts": 3, "mode": "adaptive"})
+)
+polly   = boto3.client(
+    "polly",
+    config=Config(region_name=POLLY_REGION, retries={"max_attempts": 3, "mode": "standard"})
+)
 
 # ---- app --------------------------------------------------------------------
 app = FastAPI()
@@ -99,6 +106,10 @@ def clamp_sentences(text: str, n: int = 2) -> str:
     return " ".join(parts[:n]).strip()
 
 # ---- LLM --------------------------------------------------------------------
+BEDROCK_MAX_RETRIES = int(os.getenv("BEDROCK_MAX_RETRIES", "3"))
+CHAT_MAX_CONCURRENCY = int(os.getenv("CHAT_MAX_CONCURRENCY", "4"))
+_chat_gate = threading.Semaphore(CHAT_MAX_CONCURRENCY)
+
 def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
     messages = get_msgs(session_id)
     messages.append({"role":"user","content":[{"type":"text","text":user_text}]})
@@ -110,11 +121,22 @@ def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
         "system": system_prompt,
         "messages": messages,
     }
-    r = bedrock.invoke_model(
-        modelId=BEDROCK_MODEL, accept="application/json",
-        contentType="application/json", body=json.dumps(body)
-    )
-    data = json.loads(r["body"].read())
+    last_err = None
+    for attempt in range(BEDROCK_MAX_RETRIES):
+        try:
+            r = bedrock.invoke_model(
+                modelId=BEDROCK_MODEL, accept="application/json",
+                contentType="application/json", body=json.dumps(body)
+            )
+            data = json.loads(r["body"].read())
+            break
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "ClientError")
+            if code in {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}:
+                last_err = e; _retry_sleep(attempt); continue
+            raise
+    else:
+        raise last_err or RuntimeError("Bedrock retries exhausted")
     out = ""
     for block in data.get("content", []):
         if block.get("type") == "text":
@@ -130,19 +152,29 @@ def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list):
         "system": system_prompt,
         "messages": messages,
     }
-    resp = bedrock.invoke_model_with_response_stream(
-        modelId=model_id, accept="application/json",
-        contentType="application/json", body=json.dumps(body)
-    )
-    for ev in resp["body"]:
-        chunk = ev.get("chunk", {}).get("bytes")
-        if not chunk:
-            continue
-        data = json.loads(chunk.decode("utf-8"))
-        if data.get("type") == "content_block_delta":
-            d = data.get("delta", {})
-            if d.get("type") == "text_delta":
-                yield d.get("text", "")
+    last_err = None
+    for attempt in range(BEDROCK_MAX_RETRIES):
+        try:
+            resp = bedrock.invoke_model_with_response_stream(
+                modelId=model_id, accept="application/json",
+                contentType="application/json", body=json.dumps(body)
+            )
+            for ev in resp["body"]:
+                chunk = ev.get("chunk", {}).get("bytes")
+                if not chunk:
+                    continue
+                data = json.loads(chunk.decode("utf-8"))
+                if data.get("type") == "content_block_delta":
+                    d = data.get("delta", {})
+                    if d.get("type") == "text_delta":
+                        yield d.get("text", "")
+            return
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "ClientError")
+            if code in {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}:
+                last_err = e; _retry_sleep(attempt); continue
+            raise
+    raise last_err or RuntimeError("Bedrock stream retries exhausted")
 
 # ---- Polly TTS (SSML pacing + visemes) --------------------------------------
 def make_ssml(text: str) -> str:
@@ -238,20 +270,26 @@ def chat(payload: ChatIn):
     if not txt:
         raise HTTPException(400, "Empty text")
     try:
-        q = txt.lower()
-        from datetime import datetime
-        if "date" in q and "update" not in q:
-            reply = datetime.now().strftime("Today is %B %d, %Y.")
-        elif "time" in q:
-            reply = datetime.now().strftime("It's %I:%M %p.")
-        elif q in {"what's your name","whats your name","your name?","who are you"}:
-            reply = "Rem."
-        else:
-            reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
+        if not _chat_gate.acquire(timeout=10):
+            raise HTTPException(429, "Chat busy, try again shortly")
+        try:
+            q = txt.lower()
+            from datetime import datetime
+            if "date" in q and "update" not in q:
+                reply = datetime.now().strftime("Today is %B %d, %Y.")
+            elif "time" in q:
+                reply = datetime.now().strftime("It's %I:%M %p.")
+            elif q in {"what's your name","whats your name","your name?","who are you"}:
+                reply = "Rem."
+            else:
+                reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
 
-        add_turn(sid, "user", txt)
-        add_turn(sid, "assistant", reply)
-        return {"reply": reply}
+            add_turn(sid, "user", txt)
+            add_turn(sid, "assistant", reply)
+            return {"reply": reply}
+        finally:
+            try: _chat_gate.release()
+            except Exception: pass
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "ClientError")
         raise HTTPException(500, f"Bedrock error: {code}")
@@ -270,16 +308,33 @@ def chat_stream(payload: ChatStreamIn):
     def gen():
         try:
             buff = []
-            for token in _stream_bedrock_text(BEDROCK_MODEL, PERSONA_BLESSED_BOY, messages):
-                token = token.replace("\n", " ")
-                buff.append(token)
-                yield (json.dumps({"delta": token}) + "\n").encode("utf-8")
+            acquired = _chat_gate.acquire(timeout=10)
+            if not acquired:
+                yield (json.dumps({"error": "Chat busy, try again shortly"}) + "\n").encode("utf-8")
+                return
+            try:
+                for token in _stream_bedrock_text(BEDROCK_MODEL, PERSONA_BLESSED_BOY, messages):
+                    token = token.replace("\n", " ")
+                    buff.append(token)
+                    yield (json.dumps({"delta": token}) + "\n").encode("utf-8")
+            finally:
+                try: _chat_gate.release()
+                except Exception: pass
+
             final = clamp_sentences(enforce_identity("".join(buff)) or "I'm here.")
             add_turn(sid, "user", txt)
             add_turn(sid, "assistant", final)
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "ClientError")
-            yield (json.dumps({"error": f"Bedrock error: {code}"}) + "\n").encode("utf-8")
+            if code in {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}:
+                # Fallback: get a full reply non-streaming and send once
+                try:
+                    reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
+                    yield (json.dumps({"delta": reply}) + "\n").encode("utf-8")
+                except Exception:
+                    yield (json.dumps({"error": f"Bedrock error: {code}"}) + "\n").encode("utf-8")
+            else:
+                yield (json.dumps({"error": f"Bedrock error: {code}"}) + "\n").encode("utf-8")
         except Exception as e:
             yield (json.dumps({"error": f"Stream failure: {e.__class__.__name__}"}) + "\n").encode("utf-8")
 
