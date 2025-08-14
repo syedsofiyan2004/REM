@@ -482,7 +482,7 @@ async function talk(text){
     const reader = r.body.getReader(); let leftover='';
     while(true){
       const {value, done} = await reader.read();
-      if(done) break;
+      if(done){ break; }
       if(myGen !== talkGen){ break; }
       leftover += dec.decode(value, {stream:true});
       const lines = leftover.split('\n'); leftover = lines.pop();
@@ -502,13 +502,15 @@ async function talk(text){
         if(m && m[1].trim().length>3){ enqueueSpeak(m[1]); buf = buf.slice(m[1].length); }
       }
     }
-  if(myGen !== talkGen){ return; }
+    if(myGen !== talkGen){ curStreamCtrl = null; return; }
   if(buf.trim()) { showSubtitle(buf.trim()); enqueueSpeak(buf.trim()); buf=''; }
     await speakQ;
+    curStreamCtrl = null;
   }catch(e){
     console.error(e);
     if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){
       // Interrupted: do not fallback or enqueue; just stop cleanly
+      curStreamCtrl = null;
       return;
     }
     // Small backoff then fallback to non-streaming
@@ -516,6 +518,7 @@ async function talk(text){
     const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
     const dd = await rr.json(); bubble.textContent = dd.reply || "I'm here.";
     showSubtitle(bubble.textContent); enqueueSpeak(bubble.textContent); await speakQ;
+    curStreamCtrl = null;
   }
 }
 
@@ -525,6 +528,7 @@ inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); se
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog, localCtx;
+let listening = false; // track mic listening state
 function beep(freq=880, ms=120){
   try{
     localCtx = localCtx || new (window.AudioContext||window.webkitAudioContext)();
@@ -537,6 +541,7 @@ function beep(freq=880, ms=120){
   }catch{}
 }
 function setListening(on){
+  listening = !!on;
   micdot.classList.toggle('on', on);
   miclabel.textContent = on ? 'Listening…' : 'Idle';
   if(on && speaking) stopSpeaking();
@@ -554,9 +559,21 @@ micBtn.onclick = ()=>{
   recog.onerror = e=> console.warn(e);
   recog.start();
 };
-stopBtn.onclick = ()=>{ try{ if(recog) recog.stop(); }catch{}; stopSpeaking(); };
+stopBtn.onclick = ()=>{
+  // If mic is listening, stop mic only; otherwise stop active voice/stream if any
+  try{ if(listening && recog){ recog.stop(); return; } }catch{}
+  if(speaking || curStreamCtrl || curTtsCtrl){ stopSpeaking(); }
+};
 // Quick test to verify TTS + lip-sync without typing
 testBtn.onclick = ()=>{ enqueueSpeak("Hi, I'm Rem. Nice to meet you."); };
+
+// Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
+['pointerdown','keydown'].forEach(evt=>{
+  window.addEventListener(evt, ()=>{
+    try{ if(audioCtx && audioCtx.state!=='running'){ audioCtx.resume(); } }catch{}
+    try{ if(window.speechSynthesis && window.speechSynthesis.paused){ window.speechSynthesis.resume?.(); } }catch{}
+  }, {passive:true});
+});
 </script>
 </body>
 </html>
