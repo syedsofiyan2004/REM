@@ -367,10 +367,12 @@ async function ttsFull(text){
   let lastErr;
   for(let attempt=0; attempt<3; attempt++){
     try{
-      const ctrl = new AbortController(); curTtsCtrl = ctrl;
+  const ctrl = new AbortController(); curTtsCtrl = ctrl;
+  const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 15000);
       const r = await fetch('/api/tts',{
         method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}), signal: ctrl.signal
       });
+  clearTimeout(timeout);
       if(r.status===429 || r.status===503 || r.status===502){
         const back = 250*Math.pow(2,attempt) + Math.random()*150; await new Promise(res=>setTimeout(res, back));
         continue;
@@ -470,30 +472,8 @@ let speakQ = Promise.resolve();
 let talkGen = 0; // generation id for active talk stream
 function speakWithBrowser(sentence){
   return new Promise((resolve)=>{
-    try{
-      stopSpeaking(); speaking=true;
-      const synth = window.speechSynthesis; if(!synth){ speaking=false; return resolve(); }
-      const u = new SpeechSynthesisUtterance(sentence);
-      // Prefer female English voice if available
-      const voices = synth.getVoices();
-      const pick = voices.find(v=>/en-/i.test(v.lang) && /female|woman|salli|joanna|amy|emma|linda|rem/i.test((v.name+v.voiceURI).toLowerCase()))
-                || voices.find(v=>/en-/i.test(v.lang))
-                || voices[0];
-      if(pick) u.voice = pick;
-      u.rate = 1.0; u.pitch = 1.05; u.volume = 1.0;
-      let rafId; const t0 = performance.now();
-      const pump = ()=>{
-        if(!speaking) return;
-        const t = (performance.now()-t0)/1000;
-        const v = 0.18 + 0.18*Math.abs(Math.sin(t*8.0)) + 0.06*Math.abs(Math.sin(t*13.0));
-        setJawEnergy(v);
-        rafId = requestAnimationFrame(pump);
-      };
-      u.onstart = ()=>{ pump(); };
-      const cleanup = ()=>{ if(rafId) cancelAnimationFrame(rafId); setJawEnergy(0); speaking=false; resolve(); };
-      u.onend = cleanup; u.onerror = cleanup; u.onpause = cleanup; u.onresume = ()=>{};
-      synth.speak(u);
-    }catch{ speaking=false; resolve(); }
+  // Disabled to prevent male browser voice fallback; resolve immediately.
+  return resolve();
   });
 }
 
@@ -505,9 +485,9 @@ function enqueueSpeak(sentence){
       if(!audio_b64){ throw new Error('no-audio'); }
       await playAudioWithVisemes(audio_b64, marks || []);
     }catch(e){
-      if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ return; }
-      console.warn('Server TTS failed, using browser speech', e);
-      await speakWithBrowser(s);
+  if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ return; }
+  console.warn('Server TTS failed; skipping speech to avoid browser voice', e);
+  // Intentionally skip browser speech so voice never changes from Ruth
     }
   });
 }

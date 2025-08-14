@@ -24,6 +24,7 @@ except Exception:
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "ap-south-1")
 BEDROCK_MODEL  = os.getenv("BEDROCK_MODEL",  "anthropic.claude-3-haiku-20240307-v1:0")
 POLLY_REGION   = os.getenv("POLLY_REGION",   "ap-south-1")
+POLLY_FALLBACK_REGION = os.getenv("POLLY_FALLBACK_REGION", "us-east-1")
 POLLY_VOICE    = os.getenv("POLLY_VOICE",    "Ruth")   # will auto-fallback if region lacks Ruth
 POLLY_RATE     = os.getenv("POLLY_RATE",     "medium")
 POLLY_PITCH    = os.getenv("POLLY_PITCH",    "+4%")
@@ -37,6 +38,21 @@ polly   = boto3.client(
     "polly",
     config=Config(region_name=POLLY_REGION, retries={"max_attempts": 3, "mode": "standard"})
 )
+
+# Optional fallback region (keeps the same voice, different region)
+polly_fb = None
+if POLLY_FALLBACK_REGION and POLLY_FALLBACK_REGION != POLLY_REGION:
+    try:
+        polly_fb = boto3.client(
+            "polly",
+            config=Config(region_name=POLLY_FALLBACK_REGION, retries={"max_attempts": 3, "mode": "standard"})
+        )
+    except Exception:
+        polly_fb = None
+
+def _polly_clients():
+    # Try primary region first, then fallback if configured
+    return [c for c in (polly, polly_fb) if c is not None]
 
 # ---- app --------------------------------------------------------------------
 app = FastAPI()
@@ -184,44 +200,34 @@ def make_ssml(text: str) -> str:
     inner = "<break time='80ms'/>".join(f"<s>{s}</s><break time='120ms'/>" for s in sents)
     return f"<speak><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></speak>"
 
-_VOICES_CACHE = None
-def _get_voices():
-    global _VOICES_CACHE
-    if _VOICES_CACHE is None:
+_VOICES_CACHE = {}
+def _get_voices(client=None):
+    """Cache voices per region client."""
+    c = client or polly
+    key = getattr(c.meta, "region_name", "default")
+    if key not in _VOICES_CACHE:
         try:
-            _VOICES_CACHE = polly.describe_voices().get("Voices", [])
+            _VOICES_CACHE[key] = c.describe_voices().get("Voices", [])
         except Exception:
-            _VOICES_CACHE = []
-    return _VOICES_CACHE
+            _VOICES_CACHE[key] = []
+    return _VOICES_CACHE[key]
 
 def _choose_voice(preferred: str, engine: str) -> str:
-    voices = _get_voices()
-    pref_lower = (preferred or "").lower()
-    # 1) exact preferred with engine
-    for v in voices:
-        if v.get("Id","").lower()==pref_lower and engine in set(v.get("SupportedEngines",[])):
-            return v["Id"]
-    # 2) any EN Female voice with engine (match Rem persona)
-    for v in voices:
-        if (
-            v.get("LanguageCode", "").startswith("en")
-            and v.get("Gender") == "Female"
-            and engine in set(v.get("SupportedEngines", []))
-        ):
-            return v["Id"]
-    # 3) any EN voice with engine
-    for v in voices:
-        if v.get("LanguageCode", "").startswith("en") and engine in set(v.get("SupportedEngines", [])):
-            return v["Id"]
-    # 4) any voice with engine
-    for v in voices:
-        if engine in set(v.get("SupportedEngines",[])):
-            return v["Id"]
-    # 5) last resort: preferred
+    """Return the preferred voice only (strict). Engine compatibility is handled by callers.
+
+    We purposely do NOT fall back to other voices to avoid switching timbre mid-session.
+    If the preferred voice is unavailable for the requested engine, the synth call will raise
+    (e.g., EngineNotSupportedException or InvalidVoiceIdException) and the caller may try
+    another engine (e.g., standard instead of neural).
+    """
     return preferred
 
-def _synthesize_audio(clean: str) -> Tuple[bytes, str, str]:
-    """Return (audio_bytes, engine_used, voice_used)."""
+def _synthesize_audio(clean: str) -> Tuple[bytes, str, str, any]:
+    """Return (audio_bytes, engine_used, voice_used, polly_client_used).
+
+    Always uses the preferred voice (POLLY_VOICE). Tries neural/standard and
+    will switch to a fallback region if necessary, but never changes the voice.
+    """
     plan = [
         ("neural",   "ssml", make_ssml(clean)),
         ("standard", "ssml", make_ssml(clean)),
@@ -229,27 +235,37 @@ def _synthesize_audio(clean: str) -> Tuple[bytes, str, str]:
         ("standard", "text", clean),
     ]
     last = None
-    for engine, text_type, text in plan:
-        voice = _choose_voice(POLLY_VOICE, engine)
-        try:
-            r = polly.synthesize_speech(
-                VoiceId=voice, OutputFormat="mp3",
-                Text=text, TextType=text_type, Engine=engine
-            )
-            return r["AudioStream"].read(), engine, voice
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
-                        "InvalidVoiceIdException","UnsupportedPlsAlphabetException","LanguageNotSupportedException",
-                        "ValidationException"}:
-                last = e; continue
-            raise
+    for client in _polly_clients():
+        for engine, text_type, text in plan:
+            voice = POLLY_VOICE
+            try:
+                r = client.synthesize_speech(
+                    VoiceId=voice, OutputFormat="mp3",
+                    Text=text, TextType=text_type, Engine=engine
+                )
+                # If we had to use fallback region, log once
+                try:
+                    region = getattr(client.meta, "region_name", "")
+                    if region and region != POLLY_REGION:
+                        logger.warning("Polly voice %s synthesized from fallback region %s (primary %s)", voice, region, POLLY_REGION)
+                except Exception:
+                    pass
+                return r["AudioStream"].read(), engine, voice, client
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
+                            "InvalidVoiceIdException","UnsupportedPlsAlphabetException","LanguageNotSupportedException",
+                            "ValidationException"}:
+                    last = e; continue
+                raise
+        # try next client (fallback region)
     if last: raise last
     raise RuntimeError("Polly synthesis failed")
 
-def _visemes(clean: str, engine: str, voice: str) -> list:
+def _visemes(clean: str, engine: str, voice: str, client=None) -> list:
+    c = client or polly
     try:
-        r = polly.synthesize_speech(
+        r = c.synthesize_speech(
             Text=clean, VoiceId=voice, OutputFormat="json",
             SpeechMarkTypes=["viseme"], Engine=engine
         )
@@ -259,8 +275,8 @@ def _visemes(clean: str, engine: str, voice: str) -> list:
 
 def polly_tts_with_visemes(text: str) -> Tuple[str, list]:
     clean = strip_stage(text) or text
-    audio, engine, voice = _synthesize_audio(clean)
-    marks = _visemes(clean, engine, voice)
+    audio, engine, voice, client = _synthesize_audio(clean)
+    marks = _visemes(clean, engine, voice, client)
     return base64.b64encode(audio).decode("ascii"), marks
 
 # ---- API --------------------------------------------------------------------
