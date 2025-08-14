@@ -6,3 +6,5 @@ Dockerfile
 infra
 README_DEPLOY.md
 .dockerignore
+terraform.tfstate
+terraform.tfstate.backup
