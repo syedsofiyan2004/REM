@@ -391,6 +391,9 @@ async function ttsFull(text){
 /* ====== Lip-sync (visemes + RMS fallback) ====== */
 let speaking=false, currentAudio=null, audioCtx=null, raf=null;
 let curStreamCtrl = null; // abort controller for active chat_stream
+// Mic echo control
+let autoResumeMic = false;          // set true when we pause mic for TTS and should auto-resume afterward
+let suppressASRUntil = 0;           // timestamp (performance.now) to ignore ASR results until after TTS ends
 function stopSpeaking(){
   speaking=false;
   try{ if(currentAudio){ currentAudio.pause(); currentAudio.src=''; } }catch{}
@@ -412,6 +415,11 @@ function visemeToOpen(v){ return (VMAP[v] ?? 0.35); }
 async function playAudioWithVisemes(b64, marks){
   return new Promise(async (resolve, reject)=>{
     stopSpeaking(); speaking=true;
+    // Auto-pause mic during TTS to avoid echo loop; remember to resume afterward
+    if(listening && recog){
+      autoResumeMic = true;
+      try{ stopMic(/*silent*/true); }catch{}
+    }
     const audio = new Audio('data:audio/mp3;base64,'+b64); currentAudio=audio;
 
     let cleaned=false;
@@ -422,6 +430,12 @@ async function playAudioWithVisemes(b64, marks){
       try{ audio.pause(); audio.src=''; }catch{}
       try{ if(audioCtx){ audioCtx.close(); } }catch{}
       audioCtx = null; currentAudio = null; speaking = false;
+      // After TTS ends, ignore ASR results briefly and auto-resume mic if we paused it
+      suppressASRUntil = performance.now() + 700;
+      if(autoResumeMic){
+        autoResumeMic = false;
+        try{ startMic(); }catch{}
+      }
       endOk ? resolve() : reject(new Error('audio-playback-failed'));
     };
 
@@ -583,20 +597,30 @@ function setListening(on){
   miclabel.textContent = on ? 'Listening…' : 'Idle';
   if(on && speaking) stopSpeaking();
 }
-micBtn.onclick = ()=>{
+function startMic(){
   if(!SpeechRecognition){ alert("Use Chrome/Edge for live speech. I can add Whisper fallback next."); return; }
-  recog = new SpeechRecognition(); recog.lang='en-US'; recog.interimResults=true; recog.continuous=true;
+  const r = new SpeechRecognition();
+  recog = r; r.lang='en-US'; r.interimResults=true; r.continuous=true;
   let buffer='';
-  recog.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); beep(820,120); };
-  recog.onresult = (ev)=>{
-    for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) buffer += ' '+r[0].transcript; }
+  r.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); try{ beep(820,120); }catch{} };
+  r.onresult = (ev)=>{
+    // Ignore any recognition results for a brief window after TTS ends
+    if(performance.now() < suppressASRUntil){ return; }
+    for(let i=ev.resultIndex;i<ev.results.length;i++){
+      const rr=ev.results[i]; if(rr.isFinal) buffer += ' '+rr[0].transcript;
+    }
     const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; }
   };
-  recog.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); beep(480,120); };
-  recog.onerror = e=> console.warn(e);
-  recog.start();
-};
+  r.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); try{ beep(480,120); }catch{}; recog = null; };
+  r.onerror = e=> console.warn(e);
+  try{ r.start(); }catch(e){ console.warn('recog.start failed', e); }
+}
+function stopMic(){ try{ if(recog){ recog.stop(); } }catch(e){}
+}
+micBtn.onclick = ()=> startMic();
 stopBtn.onclick = ()=>{
+  // User intent to stop everything: do not auto-resume mic after current TTS
+  autoResumeMic = false;
   try{ if(recog) recog.stop(); }catch{}
   stopSpeaking();
 };
