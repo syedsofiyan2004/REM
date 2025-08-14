@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Rem — Companion</title>
+<title>Rem — An AI Companion</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <script type="importmap">
 {
@@ -19,9 +19,7 @@
   #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,90vw);
          display:flex;flex-direction:column;gap:12px;padding:18px;
          background:linear-gradient(180deg,#0b1020a0,#0b1020a0);backdrop-filter:blur(8px);
-    border-left:1px solid #1e2a3f;z-index:2;
-    transform:translateX(100%); transition:transform .25s ease}
-  #panel.open{ transform:translateX(0) }
+         border-left:1px solid #1e2a3f;z-index:2}
   #log{flex:1;min-height:0;overflow:auto;padding-right:6px}
   .bubble{padding:12px 14px;border-radius:14px;margin:8px 0;border:1px solid #1e2a3f}
   .user{background:#12233e}.bot{background:#151c2a}
@@ -34,22 +32,16 @@
   .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#0e1627;border:1px solid #26344b;font-size:13px}
   .dot{width:10px;height:10px;border-radius:50%;background:#78859a}.dot.on{background:var(--green);box-shadow:0 0 10px var(--green)}
   #badge{position:fixed;top:16px;left:16px;z-index:2;padding:8px 12px;border-radius:12px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700;letter-spacing:.3px}
-  #hambtn{position:fixed;top:16px;right:16px;z-index:3;padding:8px 10px;border-radius:10px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700}
   #subtitle{position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:2;
        max-width:min(70vw,900px); text-align:center; padding:10px 14px; border-radius:12px;
        background:#0e1627cc; border:1px solid #23314a; color:#e9f2ff; opacity:0; transition:opacity .25s ease}
   #subtitle.show{ opacity:1 }
-  #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
-    padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#b9c6db;
-    font-size:12.5px}
 </style>
 </head>
 <body>
   <div id="scene3d"><div style="position:absolute;inset:0;display:grid;place-items:center;color:#9fb3d1">Loading 3D…</div></div>
   <div id="badge">Rem</div>
-  <button id="hambtn">☰</button>
   <div id="subtitle" aria-live="polite"></div>
-  <div id="disclaimer">Preview build: This experience is under active development and may be imperfect.</div>
 
   <aside id="panel">
     <div style="font-weight:700;letter-spacing:.4px">Chat</div>
@@ -58,48 +50,42 @@
       <input id="inp" placeholder="Say something…" />
       <button id="send">Send</button>
     </div>
-    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
-      <button class="pill" data-say="Tell me a short story about kindness.">💡 Story</button>
-      <button class="pill" data-say="Guide me through a 30-second breathing exercise.">🧘 Breathe</button>
-      <button class="pill" data-say="Teach me a fun fact about space.">🛰️ Space</button>
-      <button class="pill" data-say="Help me plan a quick healthy snack.">🥗 Snack</button>
-    </div>
   </aside>
 
   <div id="voicebar">
     <button id="mic">🎙️ Start Voice</button>
     <button id="stop" disabled>⏹️ Stop</button>
-  <button id="test">▶️ Test Voice</button>
+    <button id="test">▶️ Test Voice</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
 
 <script type="module">
-/* ====== Put your Ready Player Me GLB URL here (with ARKit morphs) ====== */
+/* ====== Avatar Source ======
+ * Use your RPM URL WITH morphTargets=ARKit, e.g.:
+ *   https://models.readyplayer.me/<id>.glb?morphTargets=ARKit
+ * Or keep the local file if it contains blend-shapes.
+ */
 const RPM_AVATAR_URL =
-  "/static/models/blessedboy.glb";
+  "https://models.readyplayer.me/689aceb4c911aabc2e8f9af4.glb?morphTargets=ARKit";
 
-/* ====== Imports (use import map to resolve 'three') ====== */
+/* ====== Imports ====== */
 import * as THREE from "three";
 import { GLTFLoader }  from "/static/vendor/GLTFLoader.js";
 import { DRACOLoader } from "/static/vendor/DRACOLoader.js";
 import { OrbitControls } from "/static/vendor/OrbitControls.js";
 
-/* ====== UI refs ====== */
-const scene3d   = document.getElementById('scene3d');
-const logEl     = document.getElementById('log');
-const inp       = document.getElementById('inp');
-const sendBtn   = document.getElementById('send');
-const micBtn    = document.getElementById('mic');
-const stopBtn   = document.getElementById('stop');
-const testBtn   = document.getElementById('test');
-const micdot    = document.getElementById('micdot');
-const miclabel  = document.getElementById('miclabel');
-const panelEl   = document.getElementById('panel');
-const hambtn    = document.getElementById('hambtn');
-const subtitle  = document.getElementById('subtitle');
-const suggestionButtons = () => Array.from(document.querySelectorAll('#panel .pill[data-say]'));
+/* ====== UI ====== */
+const scene3d = document.getElementById('scene3d');
+const logEl = document.getElementById('log');
+const inp = document.getElementById('inp');
+const sendBtn = document.getElementById('send');
+const micBtn = document.getElementById('mic');
+const stopBtn = document.getElementById('stop');
+const testBtn = document.getElementById('test');
+const micdot = document.getElementById('micdot');
+const miclabel = document.getElementById('miclabel');
+const subtitle = document.getElementById('subtitle');
 
-/* ====== log ====== */
 function add(text, who){
   const d = document.createElement('div');
   d.className = 'bubble '+who;
@@ -107,29 +93,21 @@ function add(text, who){
   logEl.appendChild(d); d.scrollIntoView({behavior:'smooth', block:'end'});
 }
 
-/* ====== 3D avatar (deferred) ====== */
+/* ====== 3D ====== */
 let renderer, scene, camera, controls, clock;
-let jawTargets=[], smileTargets=[], blinkLeftTargets=[], blinkRightTargets=[], blinkBothTargets=[], headBone=null, jawBone=null, root=null;
-let eyeLeftBone=null, eyeRightBone=null; // optional eye bones if present
-let jawEnergy=0, threeReady=false;
-let smile=0, blink=0, nextBlinkT=0, lastT=0, prevSmileLevel=0;
-let entrance = { active: true, startT: 0, fromZ: 0, toZ: 0 };
-let exprPulse = { smile: 0, winkL: 0, winkR: 0 }; // short-lived expression pulses
-let gaze = { x: 0, y: 0, t: 0 }; // eye saccades target
-
-function setJawEnergy(level){ jawEnergy = Math.max(0, Math.min(1, level)); }
-function setSmile(level){ smile = Math.max(0, Math.min(1, level)); }
-function setBlink(level){ blink = Math.max(0, Math.min(1, level)); }
+let root=null, headBone=null, jawBone=null, eyeL=null, eyeR=null;
+let jawTargets=[], smileTargets=[], blinkTargetsL=[], blinkTargetsR=[], blinkTargetsBoth=[];
+let jawEnergy=0, smile=0, threeReady=false;
+function setJawEnergy(v){ jawEnergy=Math.min(1,Math.max(0,v)); }
 
 function frameObject(obj){
   const box = new THREE.Box3().setFromObject(obj);
-  const size = new THREE.Vector3(), center = new THREE.Vector3();
-  box.getSize(size); box.getCenter(center);
-  center.y += size.y*0.28;                                        // bias toward face/upper body
-  const dist = (size.y*0.55) / Math.tan(THREE.MathUtils.degToRad(camera.fov*0.5));
-  camera.position.set(center.x, center.y + 0.06, center.z + dist*0.48);  // zoom in closer
-  camera.lookAt(center);
-  controls.target.copy(center); controls.update();
+  const size = new THREE.Vector3(), c = new THREE.Vector3();
+  box.getSize(size); box.getCenter(c);
+  c.y += size.y*0.28;
+  const dist = (size.y*0.55)/Math.tan(THREE.MathUtils.degToRad(camera.fov*0.5));
+  camera.position.set(c.x, c.y+0.06, c.z+dist*0.48);
+  camera.lookAt(c); controls.target.copy(c); controls.update();
 }
 function faceCameraIfBackwards(){
   if(!headBone || !root) return;
@@ -160,7 +138,7 @@ async function init3D(url){
   scene.add(hemi, dir);
 
   controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableZoom = false; controls.enablePan = false;
+  controls.enableZoom=false; controls.enablePan=false;
 
   clock = new THREE.Clock();
   const loader = new GLTFLoader();
@@ -171,42 +149,24 @@ async function init3D(url){
   const gltf = await loader.loadAsync(url);
   root = gltf.scene; scene.add(root);
 
-  // Increase texture filtering quality
-  try{
-    const aniso = renderer.capabilities.getMaxAnisotropy?.() || 8;
-    root.traverse(o=>{
-      const m = o.material; if(!m) return;
-      const tx = ['map','normalMap','metalnessMap','roughnessMap','emissiveMap','aoMap'];
-      for(const k of tx){ if(m[k]) m[k].anisotropy = aniso; }
-    });
-  }catch{}
-
   root.traverse(o=>{
     if (/head\b/i.test(o.name) && !headBone) headBone = o;
-    if (!jawBone && /\b(jaw|mouth)\b/i.test(o.name)) jawBone = o; // fallback bone-based jaw
-    // Eye bones (common names): Eye.L/Eye.R, eye_l/eye_r, LeftEye/RightEye
-    if (!eyeLeftBone && /eye[._\s-]*l|left\s*eye/i.test(o.name)) eyeLeftBone = o;
-    if (!eyeRightBone && /eye[._\s-]*r|right\s*eye/i.test(o.name)) eyeRightBone = o;
+    if (!jawBone && /\b(jaw|mouth)\b/i.test(o.name)) jawBone = o;
+    if (!eyeL && /eye[._\s-]*l|left\s*eye/i.test(o.name))  eyeL = o;
+    if (!eyeR && /eye[._\s-]*r|right\s*eye/i.test(o.name)) eyeR = o;
     if (o.isMesh && o.morphTargetDictionary && o.morphTargetInfluences){
       const dict = o.morphTargetDictionary;
       for (const key in dict){
-        const idx = dict[key]; const k = key.toLowerCase();
-        // Jaw / mouth open
-        if (/jaw|mouth\s*open|openmouth|aa\b|ah\b|aah|big_ah|vowel_ah/.test(k)) {
-          jawTargets.push({ mesh:o, idx });
-        }
-        // Smile variants
-        if (/smile|mouth\s*smile|smileleft|smileright|mouthcornerpull|happy|smirk/.test(k)) {
-          smileTargets.push({ mesh:o, idx });
-        }
-        // Blink variants
+        const idx = dict[key], k = key.toLowerCase();
+        if (/jaw|mouth\s*open|openmouth|aa\b|ah\b|aah|big_ah|vowel_ah/.test(k)) jawTargets.push({mesh:o, idx});
+        if (/smile|mouth\s*smile|mouthcornerpull|happy|smirk/.test(k))         smileTargets.push({mesh:o, idx});
         const blinkLike = /blink|eyelid|eye\s*close|eyesclosed|closeeye|eye\s*shut/.test(k);
-        if (blinkLike) {
-          const isLeft = /left|\bl\b|_l|\.l|eye_l|eye\.l|blinkl/.test(k);
-          const isRight = /right|\br\b|_r|\.r|eye_r|eye\.r|blinkr/.test(k);
-          if (isLeft) blinkLeftTargets.push({ mesh:o, idx });
-          else if (isRight) blinkRightTargets.push({ mesh:o, idx });
-          else blinkBothTargets.push({ mesh:o, idx });
+        if (blinkLike){
+          const isL = /left|\bl\b|_l|\.l|eye_l|eye\.l|blinkl/.test(k);
+          const isR = /right|\br\b|_r|\.r|eye_r|eye\.r|blinkr/.test(k);
+          if (isL) blinkTargetsL.push({mesh:o, idx});
+          else if (isR) blinkTargetsR.push({mesh:o, idx});
+          else blinkTargetsBoth.push({mesh:o, idx});
         }
       }
     }
@@ -215,427 +175,266 @@ async function init3D(url){
   frameObject(root);
   faceCameraIfBackwards();
 
-  // Entrance: start slightly forward and move toward camera
-  entrance.startT = clock.getElapsedTime();
-  entrance.fromZ = (root.position.z || 0) + 0.9;
-  entrance.toZ = root.position.z || 0;
-  root.position.z = entrance.fromZ;
+  // entrance + lively idle
+  const startT = clock.getElapsedTime();
+  const fromZ = (root.position.z||0)+0.9, toZ = (root.position.z||0);
+  root.position.z = fromZ;
+
+  let nextBlinkT = 0, lastBlinkT = 0, prevSmile = 0;
+  const gaze = { x:0,y:0,t:0 };
 
   function loop(){
     const t = clock.getElapsedTime();
-    // More visible idle motion
-    const yaw = Math.sin(t*0.5) * 0.10;   // ~±6°
-    const bob = Math.sin(t*0.9) * 0.045;  // a bit more bob
-    if (root){
-      // Entrance easing (quad out)
-      if (entrance.active){
-        const dt = t - entrance.startT;
-        const dur = 2.2; const p = Math.min(1, dt/dur); const e = 1 - (1-p)*(1-p);
-        root.position.z = entrance.fromZ + (entrance.toZ - entrance.fromZ)*e;
-        if (p >= 1) entrance.active = false;
-      }
-      root.rotation.y = yaw;
-      root.position.y = bob * (entrance.active ? 1.8 : 1.0);
-    }
+    // entrance
+    const dt = t - startT, dur=2.2, p=Math.min(1,dt/dur), ease=1-(1-p)*(1-p);
+    root.position.z = fromZ + (toZ-fromZ)*ease;
 
-    // Head motion: slight idle nod + speech-driven component
-    const idleNod = Math.sin(t*0.8) * 0.035;     // ~±2°
-    const speakNod = (jawEnergy-0.12) * 0.06;   // a bit stronger while speaking
-    if (headBone) headBone.rotation.x = THREE.MathUtils.lerp(headBone.rotation.x, idleNod + speakNod, 0.15);
+    // visible idle motion
+    root.rotation.y = Math.sin(t*0.5) * 0.10;
+    root.position.y = Math.sin(t*0.9) * 0.045;
 
-  // Apply mouth openness to detected morph targets (or rotate jaw bone if no morphs)
+    // head nod (idle + speech)
+    const idleNod = Math.sin(t*0.8)*0.035;
+    const speakNod = (jawEnergy-0.12)*0.06;
+    if (headBone) headBone.rotation.x = THREE.MathUtils.lerp(headBone.rotation.x, idleNod+speakNod, 0.15);
+
+    // jaw (morphs or bone)
     if (jawTargets.length){
       for (const j of jawTargets){ j.mesh.morphTargetInfluences[j.idx] = jawEnergy; }
-    } else if (jawBone) {
-      const maxOpen = THREE.MathUtils.degToRad(12); // ~12°
-      jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, jawEnergy * maxOpen, 0.2);
+    } else if (jawBone){
+      const maxOpen = THREE.MathUtils.degToRad(12);
+      jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, jawEnergy*maxOpen, 0.2);
     }
 
-  // Smile: stronger and includes short-lived pulses
-    const idleSmile = 0.10 + Math.max(0, Math.sin(t*0.5))*0.07;
-    const speakSmile = jawEnergy * 0.35;
-    exprPulse.smile = Math.max(0, exprPulse.smile - 0.02);
-    const sLevel = THREE.MathUtils.clamp(idleSmile + speakSmile + exprPulse.smile*0.6 + smile*0.2, 0, 0.8);
-  let appliedSmile = false;
-  for (const s of smileTargets){ s.mesh.morphTargetInfluences[s.idx] = THREE.MathUtils.lerp(s.mesh.morphTargetInfluences[s.idx]||0, sLevel, 0.1); appliedSmile = true; }
-  // If no smile morphs exist, emulate expression subtly by head tilt
-  if (!appliedSmile && headBone){ headBone.rotation.z = THREE.MathUtils.lerp(headBone.rotation.z, (jawEnergy*0.08) * (Math.sin(t*0.6)*0.4), 0.08); }
+    // smile level (idle + speech)
+    const idleSmile = 0.10 + Math.max(0,Math.sin(t*0.5))*0.07;
+    const speakSmile = jawEnergy*0.35;
+    const sLevel = THREE.MathUtils.clamp(idleSmile+speakSmile+smile*0.2, 0, 0.85);
+    let appliedSmile=false;
+    for (const s of smileTargets){ s.mesh.morphTargetInfluences[s.idx] = THREE.MathUtils.lerp(s.mesh.morphTargetInfluences[s.idx]||0, sLevel, 0.12); appliedSmile=true; }
+    if (!appliedSmile && headBone){ headBone.rotation.z = THREE.MathUtils.lerp(headBone.rotation.z, (jawEnergy*0.08)*(Math.sin(t*0.6)*0.4), 0.08); }
+    if (sLevel>0.33 && prevSmile<=0.33) showSubtitle('[smiles]',1200);
+    prevSmile = sLevel;
 
-    // Natural blinking (more frequent, random length)
-    if (t > nextBlinkT){ nextBlinkT = t + 2.8 + Math.random()*2.8; lastT = t; }
-    const bDur = 0.24 + Math.random()*0.08; // 0.24–0.32s
-    const bPhase = Math.max(0, 1 - Math.abs((t-lastT) - bDur*0.5)/(bDur*0.5));
-    const bLevel = THREE.MathUtils.clamp(bPhase, 0, 1);
-    let hasBlinkMorph = false;
-    for (const b of blinkLeftTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; hasBlinkMorph = true; }
-    for (const b of blinkRightTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; hasBlinkMorph = true; }
-    for (const b of blinkBothTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; hasBlinkMorph = true; }
-    // If no blink morphs, do a tiny eye-bone blink emulation (pitch down and back)
-    if (!hasBlinkMorph && (eyeLeftBone||eyeRightBone)){
-      const e = (bLevel*0.12);
-      if (eyeLeftBone) eyeLeftBone.rotation.x = THREE.MathUtils.lerp(eyeLeftBone.rotation.x, e, 0.25);
-      if (eyeRightBone) eyeRightBone.rotation.x = THREE.MathUtils.lerp(eyeRightBone.rotation.x, e, 0.25);
-    }
+    // blinking
+    if (t>nextBlinkT){ nextBlinkT=t+2.6+Math.random()*2.4; lastBlinkT=t; }
+    const bDur=0.26, bPhase=Math.max(0,1-Math.abs((t-lastBlinkT)-bDur*0.5)/(bDur*0.5));
+    const bLevel=THREE.MathUtils.clamp(bPhase, 0, 1);
+    let hasBlink=false;
+    for (const b of blinkTargetsL){ b.mesh.morphTargetInfluences[b.idx]=bLevel; hasBlink=true; }
+    for (const b of blinkTargetsR){ b.mesh.morphTargetInfluences[b.idx]=bLevel; hasBlink=true; }
+    for (const b of blinkTargetsBoth){ b.mesh.morphTargetInfluences[b.idx]=bLevel; hasBlink=true; }
+    if (!hasBlink && (eyeL||eyeR)){ const e=bLevel*0.12; if(eyeL) eyeL.rotation.x=THREE.MathUtils.lerp(eyeL.rotation.x,e,0.25); if(eyeR) eyeR.rotation.x=THREE.MathUtils.lerp(eyeR.rotation.x,e,0.25); }
 
-    // Eye saccades: subtle gaze shifts if eye bones exist
-    if ((eyeLeftBone || eyeRightBone) && headBone){
+    // eye saccades
+    if ((eyeL||eyeR) && headBone){
       gaze.t -= clock.getDelta();
-      if (gaze.t <= 0){
-        gaze.t = 0.6 + Math.random()*1.2;
-        gaze.x = (Math.random()*2-1) * 0.12; // ±0.12 rad
-        gaze.y = (Math.random()*2-1) * 0.08; // ±0.08 rad
-      }
-      const gx = gaze.x, gy = gaze.y;
-      if (eyeLeftBone){ eyeLeftBone.rotation.y = THREE.MathUtils.lerp(eyeLeftBone.rotation.y, gx, 0.08);
-                        eyeLeftBone.rotation.x = THREE.MathUtils.lerp(eyeLeftBone.rotation.x, gy, 0.08); }
-      if (eyeRightBone){ eyeRightBone.rotation.y = THREE.MathUtils.lerp(eyeRightBone.rotation.y, gx, 0.08);
-                         eyeRightBone.rotation.x = THREE.MathUtils.lerp(eyeRightBone.rotation.x, gy, 0.08); }
+      if (gaze.t<=0){ gaze.t=0.6+Math.random()*1.2; gaze.x=(Math.random()*2-1)*0.12; gaze.y=(Math.random()*2-1)*0.08; }
+      if (eyeL){ eyeL.rotation.y = THREE.MathUtils.lerp(eyeL.rotation.y, gaze.x, 0.08);
+                 eyeL.rotation.x = THREE.MathUtils.lerp(eyeL.rotation.x, gaze.y, 0.08); }
+      if (eyeR){ eyeR.rotation.y = THREE.MathUtils.lerp(eyeR.rotation.y, gaze.x, 0.08);
+                 eyeR.rotation.x = THREE.MathUtils.lerp(eyeR.rotation.x, gaze.y, 0.08); }
     }
 
-    // Smile indicator
-    if (sLevel > 0.33 && prevSmileLevel <= 0.33) { showSubtitle('[smiles]', 1200); exprPulse.smile = 1.0; }
-    prevSmileLevel = sLevel;
-
-    controls.update();
-    renderer.render(scene, camera);
-    requestAnimationFrame(loop);
+    controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop);
   }
   loop();
 
   window.addEventListener('resize', ()=>{
-    const W = scene3d.clientWidth, H = scene3d.clientHeight;
-    renderer.setSize(W,H); camera.aspect = W/H; camera.updateProjectionMatrix();
-    if (root) frameObject(root);
+    const W=scene3d.clientWidth, H=scene3d.clientHeight;
+    renderer.setSize(W,H); camera.aspect=W/H; camera.updateProjectionMatrix();
+    if(root) frameObject(root);
   });
-
-  // Pointer-driven subtle gaze targeting (if eye bones exist)
-  let lastPointerAt = 0;
-  window.addEventListener('pointermove', (ev)=>{
-    if(!(eyeLeftBone||eyeRightBone)) return;
-    const x = ev.clientX / window.innerWidth;
-    const y = ev.clientY / window.innerHeight;
-    gaze.x = (x - 0.5) * 0.22;   // left/right
-    gaze.y = (0.5 - y) * 0.14;   // up/down
-    gaze.t = 0.6;                // hold this target for a bit
-    lastPointerAt = performance.now();
-  }, {passive:true});
-
-  threeReady = true;
 }
-function schedule3D(){
-  const start = ()=>
-    init3D(RPM_AVATAR_URL)
-      .catch(async (err)=>{
-        console.warn("Remote 3D load failed, trying local fallback:", err);
-        try{
-          await init3D('/static/models/blessedboy.glb');
-        }catch(e2){
-          console.error("Local 3D fallback failed:", e2);
-          const overlay = scene3d.querySelector('div');
-          if(overlay) overlay.textContent = '3D failed to load. Check network or local assets.';
-        }
-      })
-      .finally(()=>scene3d.style.pointerEvents = "auto");
-  (window.requestIdleCallback || ((f)=>setTimeout(f,250)))(start);
-}
-scene3d.style.pointerEvents = "none";
-// Basic WebGL support check
-try{
-  const test = document.createElement('canvas').getContext('webgl') || document.createElement('canvas').getContext('experimental-webgl');
-  if(!test){
+(async function boot(){
+  try{ await init3D(RPM_AVATAR_URL); threeReady=true; }
+  catch(e){
+    console.warn('3D load failed', e);
     const overlay = scene3d.querySelector('div');
-    if(overlay) overlay.textContent = 'WebGL not supported. Try a newer browser or update graphics drivers.';
-  }else{
-    schedule3D();
-    // If it takes too long, surface a hint
-    setTimeout(()=>{
-      if(!threeReady){
-        const overlay = scene3d.querySelector('div');
-        if(overlay) overlay.textContent = 'Still loading 3D… Check /static/vendor and /static/models files.';
-      }
-    }, 8000);
+    if(overlay) overlay.textContent='3D failed to load. Ensure ARKit morphs or check /static/vendor files.';
   }
-}catch{
-  const overlay = scene3d.querySelector('div');
-  if(overlay) overlay.textContent = '3D init error. See console for details.';
+})();
+function showSubtitle(text, ttl=4000){
+  subtitle.textContent=text; subtitle.classList.add('show');
+  setTimeout(()=>subtitle.classList.remove('show'), ttl);
 }
 
-/* ====== TTS with visemes ====== */
-let curTtsCtrl = null; // abort controller for active TTS fetch
+/* ====== Persistent AudioContext + lip-sync ====== */
+let AC = null;                 // one AudioContext reused (prevents “no more audio” after Stop)
+let speaking=false, currentAudio=null, analyser=null, srcNode=null, raf=null;
+let curStreamCtrl=null, curTtsCtrl=null, speakQ=Promise.resolve();
+
+function ensureAC(){
+  if (!AC) AC = new (window.AudioContext||window.webkitAudioContext)();
+  if (AC.state!=='running') AC.resume().catch(()=>{});
+  return AC;
+}
+function hardCleanup(){
+  try{ if(raf) cancelAnimationFrame(raf); }catch{}
+  raf=null;
+  try{ if(srcNode){ srcNode.disconnect(); srcNode=null; } }catch{}
+  try{ if(analyser){ analyser.disconnect(); analyser=null; } }catch{}
+  try{ if(currentAudio){ currentAudio.pause(); currentAudio.src=''; } }catch{}
+  currentAudio=null;
+  setJawEnergy(0);
+}
+function stopAll(){
+  speaking=false;
+  hardCleanup();
+  try{ if(curStreamCtrl){ curStreamCtrl.abort(); curStreamCtrl=null; } }catch{}
+  try{ if(curTtsCtrl){ curTtsCtrl.abort();  curTtsCtrl=null;  } }catch{}
+  try{ speakQ = Promise.resolve(); }catch{}
+  // do not close AC — keep it for next plays (avoids “no speech after stop”)
+  showSubtitle('');
+}
+
+/* --- TTS/Viseme --- */
 async function ttsFull(text){
-  // Retry a couple times on 429/5xx to smooth out transient throttling
-  let lastErr;
   for(let attempt=0; attempt<3; attempt++){
     try{
       const ctrl = new AbortController(); curTtsCtrl = ctrl;
-      const r = await fetch('/api/tts',{
-        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}), signal: ctrl.signal
-      });
-      if(r.status===429 || r.status===503 || r.status===502){
-        const back = 250*Math.pow(2,attempt) + Math.random()*150; await new Promise(res=>setTimeout(res, back));
-        continue;
-      }
-      const d = await r.json(); return d; // {audio_b64, marks}
+      const r = await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:ctrl.signal});
+      if(r.status===429 || r.status===502 || r.status===503){ await new Promise(res=>setTimeout(res, 250*(2**attempt))); continue; }
+      const d = await r.json(); curTtsCtrl=null; return d;
     }catch(e){
-      if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ throw e; }
-      lastErr = e; const back = 200*Math.pow(2,attempt); await new Promise(res=>setTimeout(res, back));
-    } finally {
-      curTtsCtrl = null;
+      if(e.name==='AbortError') throw e;
+      await new Promise(res=>setTimeout(res, 200*(2**attempt)));
     }
   }
-  throw lastErr || new Error('tts-retries-exhausted');
-}
-
-/* ====== Lip-sync (visemes + RMS fallback) ====== */
-let speaking=false, currentAudio=null, audioCtx=null, raf=null;
-let curStreamCtrl = null; // abort controller for active chat_stream
-function stopSpeaking(){
-  speaking=false;
-  try{ if(currentAudio){ currentAudio.pause(); currentAudio.src=''; } }catch{}
-  if(raf) cancelAnimationFrame(raf); currentAudio=null;
-  setJawEnergy(0);
-  if(audioCtx){ try{ audioCtx.close(); }catch{} audioCtx=null; }
-  try{ if(window.speechSynthesis){ window.speechSynthesis.cancel(); } }catch{}
-  // Flush any queued utterances so a new prompt starts fresh
-  try{ speakQ = Promise.resolve(); }catch{}
-  // Abort any active streaming request so it doesn't enqueue more sentences
-  try{ if(curStreamCtrl){ curStreamCtrl.abort(); curStreamCtrl = null; } }catch{}
-  // Abort any active TTS fetch
-  try{ if(curTtsCtrl){ curTtsCtrl.abort(); curTtsCtrl = null; } }catch{}
+  throw new Error('tts-failed');
 }
 const VMAP = { "sil":0.00, "p":0.15, "t":0.2, "f":0.22, "k":0.22, "S":0.2, "T":0.22, "r":0.28, "w":0.3,
                "e":0.55, "i":0.6, "o":0.75, "u":0.78, "@":0.5, "a":0.95 };
-function visemeToOpen(v){ return (VMAP[v] ?? 0.35); }
+const vOpen = v => (VMAP[v] ?? 0.35);
 
-async function playAudioWithVisemes(b64, marks){
+async function playWithVisemes(b64, marks){
   return new Promise(async (resolve, reject)=>{
-    stopSpeaking(); speaking=true;
+    speaking=true; hardCleanup();
     const audio = new Audio('data:audio/mp3;base64,'+b64); currentAudio=audio;
-
-    let cleaned=false;
-    const cleanup=(endOk=true)=>{
-      if(cleaned) return; cleaned=true;
-      try{ if(raf) cancelAnimationFrame(raf); }catch{}
-      setJawEnergy(0);
-      try{ audio.pause(); audio.src=''; }catch{}
-      try{ if(audioCtx){ audioCtx.close(); } }catch{}
-      audioCtx = null; currentAudio = null; speaking = false;
-      endOk ? resolve() : reject(new Error('audio-playback-failed'));
-    };
+    const ac = ensureAC();
+    analyser = ac.createAnalyser(); analyser.fftSize = 512;
 
     try{
-      audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-      const src = audioCtx.createMediaElementSource(audio);
-      const an  = audioCtx.createAnalyser(); an.fftSize=512;
-      src.connect(an); an.connect(audioCtx.destination);
+      srcNode = ac.createMediaElementSource(audio);
+      srcNode.connect(analyser); analyser.connect(ac.destination);
+    }catch(e){
+      // If the element was connected to an old context, fall back to simple play
+      console.warn('MediaElementSource error, simple play fallback', e);
+      audio.onended = ()=>{ setJawEnergy(0); speaking=false; resolve(); };
+      audio.onerror = ()=>{ setJawEnergy(0); speaking=false; reject(new Error('audio-error')); };
+      audio.play().catch(err=>{ console.warn(err); resolve(); });
+      return;
+    }
 
-      try{ if(audioCtx.state!=='running') await audioCtx.resume(); }catch{}
-      let started=false;
-      audio.onplay = ()=>{ started=true; };
-      audio.onerror = ()=> cleanup(false);
-      const startWatch = setTimeout(()=>{ if(!started) cleanup(false); }, 2500);
-  audio.onended = ()=>{ clearTimeout(startWatch); cleanup(true); };
-  // If we interrupt (stopSpeaking pauses audio), treat as a clean end so the queue continues
-  audio.onpause = ()=>{ clearTimeout(startWatch); cleanup(true); };
-      audio.play().catch(()=> cleanup(false));
+    try{ if(ac.state!=='running') await ac.resume(); }catch{}
+    audio.onended = ()=>{ setJawEnergy(0); speaking=false; resolve(); };
+    audio.onerror = ()=>{ setJawEnergy(0); speaking=false; reject(new Error('audio-error')); };
+    audio.onpause = ()=>{ setJawEnergy(0); speaking=false; resolve(); }; // treat Stop as clean end
 
-      let idx=0, target=0.2, level=0.15;
-      const startAt = audioCtx.currentTime;
-      const data = new Uint8Array(an.frequencyBinCount);
+    audio.play().catch(err=>{ console.warn('audio.play failed', err); resolve(); });
 
-      const tick=()=>{
-        if(!speaking || cleaned) return;
-        const tms = (audioCtx.currentTime - startAt)*1000;
+    let idx=0, target=0.2, level=0.15;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const startedAt = performance.now();
 
-        while(Array.isArray(marks) && idx<marks.length && marks[idx].time <= tms + 30){
-          target = visemeToOpen(marks[idx].value); idx++;
-        }
+    const tick=()=>{
+      if(!speaking) return;
+      const tms = performance.now() - startedAt;
 
-        an.getByteTimeDomainData(data);
-        let s=0; for(let i=0;i<data.length;i++){ const v=(data[i]-128)/128; s+=v*v; }
-        const rms=Math.sqrt(s/data.length);
-        const assist = Math.min(0.25, rms*0.6);
+      while(Array.isArray(marks) && idx<marks.length && marks[idx].time <= tms + 30){
+        target = vOpen(marks[idx].value); idx++;
+      }
+      analyser.getByteTimeDomainData(data);
+      let s=0; for(let i=0;i<data.length;i++){ const v=(data[i]-128)/128; s+=v*v; }
+      const rms=Math.sqrt(s/data.length);
+      const assist = Math.min(0.25, rms*0.6);
+      level = level*0.6 + (target+assist)*0.4;
 
-        level = level*0.6 + (target+assist)*0.4;
-        setJawEnergy(Math.max(0, Math.min(1, level)));
-
-        raf = requestAnimationFrame(tick);
-      };
+      setJawEnergy(Math.max(0, Math.min(1, level)));
       raf = requestAnimationFrame(tick);
-    }catch(e){ cleanup(false); }
+    };
+    raf = requestAnimationFrame(tick);
   });
 }
-
-let speakQ = Promise.resolve();
-let talkGen = 0; // generation id for active talk stream
-function speakWithBrowser(sentence){
-  return new Promise((resolve)=>{
-    try{
-      stopSpeaking(); speaking=true;
-      const synth = window.speechSynthesis; if(!synth){ speaking=false; return resolve(); }
-      const u = new SpeechSynthesisUtterance(sentence);
-      // Prefer female English voice if available
-      const voices = synth.getVoices();
-      const pick = voices.find(v=>/en-/i.test(v.lang) && /female|woman|salli|joanna|amy|emma|linda|rem/i.test((v.name+v.voiceURI).toLowerCase()))
-                || voices.find(v=>/en-/i.test(v.lang))
-                || voices[0];
-      if(pick) u.voice = pick;
-      u.rate = 1.0; u.pitch = 1.05; u.volume = 1.0;
-      let rafId; const t0 = performance.now();
-      const pump = ()=>{
-        if(!speaking) return;
-        const t = (performance.now()-t0)/1000;
-        const v = 0.18 + 0.18*Math.abs(Math.sin(t*8.0)) + 0.06*Math.abs(Math.sin(t*13.0));
-        setJawEnergy(v);
-        rafId = requestAnimationFrame(pump);
-      };
-      u.onstart = ()=>{ pump(); };
-      const cleanup = ()=>{ if(rafId) cancelAnimationFrame(rafId); setJawEnergy(0); speaking=false; resolve(); };
-      u.onend = cleanup; u.onerror = cleanup; u.onpause = cleanup; u.onresume = ()=>{};
-      synth.speak(u);
-    }catch{ speaking=false; resolve(); }
-  });
-}
-
 function enqueueSpeak(sentence){
   const s = (sentence||'').trim(); if(!s) return;
   speakQ = speakQ.then(async ()=>{
     try{
       const {audio_b64, marks} = await ttsFull(s);
-      if(!audio_b64){ throw new Error('no-audio'); }
-      await playAudioWithVisemes(audio_b64, marks || []);
+      await playWithVisemes(audio_b64, marks||[]);
     }catch(e){
-      if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ return; }
-      console.warn('Server TTS failed, using browser speech', e);
-      await speakWithBrowser(s);
+      if(e.name==='AbortError') return; // interrupted
+      // tiny browser TTS fallback
+      try{
+        const synth = window.speechSynthesis; if(!synth) return;
+        const u = new SpeechSynthesisUtterance(s); u.rate=1; u.pitch=1.05;
+        synth.cancel(); synth.speak(u);
+      }catch{}
     }
   });
 }
 
-/* ====== Subtitles + panel toggle ====== */
-let subTimer; function showSubtitle(text, ttl=4000){
-  subtitle.textContent = text; subtitle.classList.add('show');
-  if(subTimer) clearTimeout(subTimer);
-  subTimer = setTimeout(()=>subtitle.classList.remove('show'), ttl);
-}
-hambtn.onclick = ()=>{ panelEl.classList.toggle('open'); };
-panelEl.addEventListener('mouseleave', ()=> panelEl.classList.remove('open'));
-
-/* ====== Streaming chat (with sentence-level TTS) ====== */
+/* ====== Chat stream with sentence TTS ====== */
 async function talk(text){
-  const myGen = ++talkGen;
-  stopSpeaking();
+  stopAll(); // cancel anything pending cleanly
   const q = (text||'').trim(); if(!q) return;
-  add(q,'user');
+  add(q, 'user');
 
   const bubble = document.createElement('div'); bubble.className='bubble bot'; bubble.textContent=''; logEl.appendChild(bubble);
+  let buf='', leftover=''; const dec=new TextDecoder();
 
-  let buf=''; const dec=new TextDecoder();
   try{
-    // Create a fresh controller for this stream and store it globally for interruption
     const ctrl = new AbortController(); curStreamCtrl = ctrl;
-    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: ctrl.signal});
-    if(!r.ok){ throw new Error('stream-status-'+r.status); }
-    const reader = r.body.getReader(); let leftover='';
+    const r = await fetch('/api/chat_stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q, session_id:'local-1'}),signal:ctrl.signal});
+    const reader = r.body.getReader();
     while(true){
-      const {value, done} = await reader.read();
-      if(done){ break; }
-      if(myGen !== talkGen){ break; }
-      leftover += dec.decode(value, {stream:true});
+      const {value, done} = await reader.read(); if(done) break;
+      leftover += dec.decode(value,{stream:true});
       const lines = leftover.split('\n'); leftover = lines.pop();
       for(const line of lines){
         if(!line.trim()) continue;
         const {delta='', error} = JSON.parse(line);
-        if(error){
-          bubble.textContent += ` [${error}]`;
-          if(/Chat busy|Bedrock error|Stream failure/i.test(error)){
-            throw new Error('fallback-chat');
-          }
-          continue;
-        }
-  bubble.textContent += delta; buf += delta; showSubtitle(bubble.textContent.slice(-220));
-
+        if(error){ bubble.textContent += ` [${error}]`; continue; }
+        bubble.textContent += delta; buf += delta; showSubtitle(bubble.textContent.slice(-220));
         const m = buf.match(/(.+?[.!?][)"']?\s)/);
         if(m && m[1].trim().length>3){ enqueueSpeak(m[1]); buf = buf.slice(m[1].length); }
       }
     }
-    if(myGen !== talkGen){ curStreamCtrl = null; return; }
-  if(buf.trim()) { showSubtitle(buf.trim()); enqueueSpeak(buf.trim()); buf=''; }
-    await speakQ;
-    curStreamCtrl = null;
+    if(buf.trim()){ showSubtitle(buf.trim()); enqueueSpeak(buf.trim()); buf=''; }
+    await speakQ; curStreamCtrl=null;
   }catch(e){
-    console.error(e);
-    if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){
-      // Interrupted: do not fallback or enqueue; just stop cleanly
-      curStreamCtrl = null;
-      return;
-    }
-    // Small backoff then fallback to non-streaming
-    await new Promise(res=>setTimeout(res, 250));
-    const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
+    if(e.name==='AbortError'){ curStreamCtrl=null; return; } // interrupted
+    const rr = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q, session_id:'local-1'})});
     const dd = await rr.json(); bubble.textContent = dd.reply || "I'm here.";
     showSubtitle(bubble.textContent); enqueueSpeak(bubble.textContent); await speakQ;
-    curStreamCtrl = null;
+    curStreamCtrl=null;
   }
 }
 
-/* ====== inputs & mic ====== */
+/* ====== Input & mic ====== */
 sendBtn.onclick = ()=>{ const t = inp.value.trim(); if(t){ talk(t); inp.value=''; } };
 inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); sendBtn.click(); } });
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recog, localCtx;
-let listening = false; // track mic listening state
-function beep(freq=880, ms=120){
-  try{
-    localCtx = localCtx || new (window.AudioContext||window.webkitAudioContext)();
-    const o=localCtx.createOscillator(), g=localCtx.createGain();
-    o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(localCtx.destination);
-    g.gain.setValueAtTime(0.0001, localCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.25, localCtx.currentTime+0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, localCtx.currentTime+ms/1000);
-    o.start(); o.stop(localCtx.currentTime+ms/1000);
-  }catch{}
-}
-function setListening(on){
-  listening = !!on;
-  micdot.classList.toggle('on', on);
-  miclabel.textContent = on ? 'Listening…' : 'Idle';
-  if(on && speaking) stopSpeaking();
-}
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog=null;
+function setListening(on){ micdot.classList.toggle('on', on); miclabel.textContent = on ? 'Listening…' : 'Idle'; if(on && speaking) stopAll(); }
 micBtn.onclick = ()=>{
-  if(!SpeechRecognition){ alert("Use Chrome/Edge for live speech. I can add Whisper fallback next."); return; }
-  recog = new SpeechRecognition(); recog.lang='en-US'; recog.interimResults=true; recog.continuous=true;
+  if(!SR){ alert('Use Chrome/Edge for speech input.'); return; }
+  recog = new SR(); recog.lang='en-US'; recog.interimResults=true; recog.continuous=true;
   let buffer='';
-  recog.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); beep(820,120); };
-  recog.onresult = (ev)=>{
-    for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) buffer += ' '+r[0].transcript; }
-    const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; }
-  };
-  recog.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); beep(480,120); };
-  recog.onerror = e=> console.warn(e);
+  recog.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); };
+  recog.onresult = (ev)=>{ for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) buffer += ' '+r[0].transcript; }
+    const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; } };
+  recog.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); };
+  recog.onerror = e=>console.warn(e);
   recog.start();
 };
-stopBtn.onclick = ()=>{
-  try{ if(recog) recog.stop(); }catch{}
-  stopSpeaking();
-};
-// Quick test to verify TTS + lip-sync without typing
-testBtn.onclick = ()=>{ enqueueSpeak("Hello My Little Baby Boy, I am Rem."); };
+stopBtn.onclick = ()=>{ try{ if(recog) recog.stop(); }catch{} stopAll(); };
+testBtn.onclick = ()=> enqueueSpeak("Hey! I'm Rem. Nice to meet you.");
 
-// Suggestions chips
-for (const b of suggestionButtons()){
-  b.addEventListener('click', ()=>{
-    const v = b.getAttribute('data-say')||''; if(v){ talk(v); }
-  });
-}
-
-// Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
+// Unlock audio on any gesture
 ['pointerdown','keydown'].forEach(evt=>{
-  window.addEventListener(evt, ()=>{
-    try{ if(audioCtx && audioCtx.state!=='running'){ audioCtx.resume(); } }catch{}
-    try{ if(window.speechSynthesis && window.speechSynthesis.paused){ window.speechSynthesis.resume?.(); } }catch{}
-  }, {passive:true});
+  window.addEventListener(evt, ()=>{ try{ ensureAC(); }catch{} }, {passive:true});
 });
 </script>
 </body>
