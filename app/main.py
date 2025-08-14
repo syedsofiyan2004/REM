@@ -2,7 +2,7 @@ import base64, json, os, re, html, time, threading, random
 import logging
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,6 +94,8 @@ class ChatIn(BaseModel):
 
 class TTSIn(BaseModel):
     text: str
+    lang: Optional[str] = None   # e.g., 'en','es','fr'
+    mode: Optional[str] = None   # 'auto' chooses a female voice by language; default uses Ruth
 
 class ChatStreamIn(BaseModel):
     text: str
@@ -116,6 +118,8 @@ def enforce_identity(text: str) -> str:
     t = re.sub(r"\bClaude\b", "Rem", text, flags=re.I)
     t = re.sub(r"\bBlessed Boy\b", "Rem", t, flags=re.I)
     t = re.sub(r"\bAnthropic\b", "my team", t, flags=re.I)
+    # Remove leading assistant name tags like "Rem:", "Rem -", "Rem." at the start
+    t = re.sub(r"^\s*Rem\s*[:\-–—.,]\s*", "", t, flags=re.I)
     return strip_stage(t)
 
 def clamp_sentences(text: str, n: int = 2) -> str:
@@ -132,7 +136,7 @@ def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
     messages.append({"role":"user","content":[{"type":"text","text":user_text}]})
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 260,
+    "max_tokens": 360,
         "temperature": 0.7,     # a touch more variety
         "top_p": 0.9,
         "system": system_prompt,
@@ -163,7 +167,7 @@ def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
 def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list):
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 260,
+    "max_tokens": 360,
         "temperature": 0.7,
         "top_p": 0.9,
         "system": system_prompt,
@@ -222,7 +226,7 @@ def _choose_voice(preferred: str, engine: str) -> str:
     """
     return preferred
 
-def _synthesize_audio(clean: str) -> Tuple[bytes, str, str, any]:
+def _synthesize_audio(clean: str, voice: str) -> Tuple[bytes, str, str, any]:
     """Return (audio_bytes, engine_used, voice_used, polly_client_used).
 
     Always uses the preferred voice (POLLY_VOICE). Tries neural/standard and
@@ -273,10 +277,38 @@ def _visemes(clean: str, engine: str, voice: str, client=None) -> list:
     except Exception:
         return []
 
-def polly_tts_with_visemes(text: str) -> Tuple[str, list]:
+VOICE_MAP = {
+    "en": "Ruth",      # English
+    "es": "Lucia",     # Spanish
+    "fr": "Celine",    # French
+    "de": "Vicki",     # German
+    "it": "Bianca",    # Italian
+    "pt": "Camila",    # Portuguese (BR)
+    "ja": "Mizuki",    # Japanese
+    "ko": "Seoyeon",   # Korean
+    "zh": "Zhiyu",     # Chinese (Mandarin)
+    "hi": "Aditi",     # Hindi (bilingual)
+    "ar": "Zeina",
+    "nl": "Lotte",
+    "sv": "Astrid",
+    "da": "Naja",
+    "nb": "Liv",
+    "pl": "Maja",
+    "ru": "Tatyana",
+    "tr": "Filiz",
+}
+
+def _voice_for(text: str, lang_hint: Optional[str], mode: Optional[str]) -> str:
+    if (mode or "").lower() == "auto":
+        code = (lang_hint or "en").split("-")[0].lower()
+        return VOICE_MAP.get(code, VOICE_MAP["en"])  # choose a female voice per language
+    return POLLY_VOICE
+
+def polly_tts_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
     clean = strip_stage(text) or text
-    audio, engine, voice, client = _synthesize_audio(clean)
-    marks = _visemes(clean, engine, voice, client)
+    voice = _voice_for(clean, lang, mode)
+    audio, engine, used_voice, client = _synthesize_audio(clean, voice)
+    marks = _visemes(clean, engine, used_voice, client)
     return base64.b64encode(audio).decode("ascii"), marks
 
 # ---- API --------------------------------------------------------------------
@@ -406,7 +438,7 @@ def tts(payload: TTSIn):
             last_err = None
             for attempt in range(3):
                 try:
-                    audio_b64, marks = polly_tts_with_visemes(txt)
+                    audio_b64, marks = polly_tts_with_visemes(txt, payload.lang, payload.mode)
                     _tts_cache_put(key, audio_b64, marks)
                     break
                 except ClientError as e:
