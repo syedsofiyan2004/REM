@@ -58,6 +58,12 @@
       <input id="inp" placeholder="Say something…" />
       <button id="send">Send</button>
     </div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
+      <button class="pill" data-say="Tell me a short story about kindness.">💡 Story</button>
+      <button class="pill" data-say="Guide me through a 30-second breathing exercise.">🧘 Breathe</button>
+      <button class="pill" data-say="Teach me a fun fact about space.">🛰️ Space</button>
+      <button class="pill" data-say="Help me plan a quick healthy snack.">🥗 Snack</button>
+    </div>
   </aside>
 
   <div id="voicebar">
@@ -91,6 +97,7 @@ const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
 const hambtn    = document.getElementById('hambtn');
 const subtitle  = document.getElementById('subtitle');
+const suggestionButtons = () => Array.from(document.querySelectorAll('#panel .pill[data-say]'));
 
 /* ====== log ====== */
 function add(text, who){
@@ -103,9 +110,12 @@ function add(text, who){
 /* ====== 3D avatar (deferred) ====== */
 let renderer, scene, camera, controls, clock;
 let jawTargets=[], smileTargets=[], blinkLeftTargets=[], blinkRightTargets=[], blinkBothTargets=[], headBone=null, jawBone=null, root=null;
+let eyeLeftBone=null, eyeRightBone=null; // optional eye bones if present
 let jawEnergy=0, threeReady=false;
 let smile=0, blink=0, nextBlinkT=0, lastT=0, prevSmileLevel=0;
 let entrance = { active: true, startT: 0, fromZ: 0, toZ: 0 };
+let exprPulse = { smile: 0, winkL: 0, winkR: 0 }; // short-lived expression pulses
+let gaze = { x: 0, y: 0, t: 0 }; // eye saccades target
 
 function setJawEnergy(level){ jawEnergy = Math.max(0, Math.min(1, level)); }
 function setSmile(level){ smile = Math.max(0, Math.min(1, level)); }
@@ -172,20 +182,28 @@ async function init3D(url){
   }catch{}
 
   root.traverse(o=>{
-    if (/head/i.test(o.name) && !headBone) headBone = o;
-  if (!jawBone && /jaw|mouth/i.test(o.name)) jawBone = o; // fallback bone-based jaw
+    if (/head\b/i.test(o.name) && !headBone) headBone = o;
+    if (!jawBone && /\b(jaw|mouth)\b/i.test(o.name)) jawBone = o; // fallback bone-based jaw
+    // Eye bones (common names): Eye.L/Eye.R, eye_l/eye_r, LeftEye/RightEye
+    if (!eyeLeftBone && /eye[._\s-]*l|left\s*eye/i.test(o.name)) eyeLeftBone = o;
+    if (!eyeRightBone && /eye[._\s-]*r|right\s*eye/i.test(o.name)) eyeRightBone = o;
     if (o.isMesh && o.morphTargetDictionary && o.morphTargetInfluences){
       const dict = o.morphTargetDictionary;
       for (const key in dict){
         const idx = dict[key]; const k = key.toLowerCase();
-        if (k.includes('jawopen') || k.includes('mouthopen') || k.includes('aa') || k.includes('ah')) {
+        // Jaw / mouth open
+        if (/jaw|mouth\s*open|openmouth|aa\b|ah\b|aah|big_ah|vowel_ah/.test(k)) {
           jawTargets.push({ mesh:o, idx });
         }
-        if (k.includes('smile') || k.includes('happy') || k.includes('smirk')) { smileTargets.push({ mesh:o, idx }); }
-        const isBlink = k.includes('blink') || (k.includes('eye') && (k.includes('close') || k.includes('shut')));
-        if (isBlink) {
-          const isLeft = k.includes('left') || k.includes('l ') || k.endsWith('_l') || k.endsWith('.l') || k.includes('eye_l');
-          const isRight = k.includes('right') || k.includes('r ') || k.endsWith('_r') || k.endsWith('.r') || k.includes('eye_r');
+        // Smile variants
+        if (/smile|mouth\s*smile|smileleft|smileright|mouthcornerpull|happy|smirk/.test(k)) {
+          smileTargets.push({ mesh:o, idx });
+        }
+        // Blink variants
+        const blinkLike = /blink|eyelid|eye\s*close|eyesclosed|closeeye|eye\s*shut/.test(k);
+        if (blinkLike) {
+          const isLeft = /left|\bl\b|_l|\.l|eye_l|eye\.l|blinkl/.test(k);
+          const isRight = /right|\br\b|_r|\.r|eye_r|eye\.r|blinkr/.test(k);
           if (isLeft) blinkLeftTargets.push({ mesh:o, idx });
           else if (isRight) blinkRightTargets.push({ mesh:o, idx });
           else blinkBothTargets.push({ mesh:o, idx });
@@ -204,10 +222,10 @@ async function init3D(url){
   root.position.z = entrance.fromZ;
 
   function loop(){
-  const t = clock.getElapsedTime();
+    const t = clock.getElapsedTime();
     // More visible idle motion
-    const yaw = Math.sin(t*0.5) * 0.08;   // ~±4.5°
-    const bob = Math.sin(t*0.9) * 0.035;  // ~3.5 cm
+    const yaw = Math.sin(t*0.5) * 0.10;   // ~±6°
+    const bob = Math.sin(t*0.9) * 0.045;  // a bit more bob
     if (root){
       // Entrance easing (quad out)
       if (entrance.active){
@@ -221,8 +239,8 @@ async function init3D(url){
     }
 
     // Head motion: slight idle nod + speech-driven component
-    const idleNod = Math.sin(t*0.8) * 0.03;     // ~±1.7°
-    const speakNod = (jawEnergy-0.15) * 0.04;   // add a bit more when talking
+    const idleNod = Math.sin(t*0.8) * 0.035;     // ~±2°
+    const speakNod = (jawEnergy-0.12) * 0.06;   // a bit stronger while speaking
     if (headBone) headBone.rotation.x = THREE.MathUtils.lerp(headBone.rotation.x, idleNod + speakNod, 0.15);
 
   // Apply mouth openness to detected morph targets (or rotate jaw bone if no morphs)
@@ -233,22 +251,39 @@ async function init3D(url){
       jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, jawEnergy * maxOpen, 0.2);
     }
 
-  // Smile: subtle when idle, stronger while speaking
-  const idleSmile = 0.08 + Math.max(0, Math.sin(t*0.6))*0.04;
-  const speakSmile = jawEnergy * 0.25;
-  const sLevel = THREE.MathUtils.clamp(idleSmile + speakSmile, 0, 0.5);
+    // Smile: stronger and includes short-lived pulses
+    const idleSmile = 0.10 + Math.max(0, Math.sin(t*0.5))*0.07;
+    const speakSmile = jawEnergy * 0.35;
+    exprPulse.smile = Math.max(0, exprPulse.smile - 0.02);
+    const sLevel = THREE.MathUtils.clamp(idleSmile + speakSmile + exprPulse.smile*0.6 + smile*0.2, 0, 0.8);
   for (const s of smileTargets){ s.mesh.morphTargetInfluences[s.idx] = THREE.MathUtils.lerp(s.mesh.morphTargetInfluences[s.idx]||0, sLevel, 0.1); }
 
-  // Natural blinking
-  if (t > nextBlinkT){ nextBlinkT = t + 3 + Math.random()*3; lastT = t; }
-  const blinkPhase = Math.max(0, 1 - Math.abs((t-lastT) - 0.15)/0.15); // quick close/open ~0.3s
-  const bLevel = THREE.MathUtils.clamp(blinkPhase, 0, 1);
-  for (const b of blinkLeftTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
-  for (const b of blinkRightTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
-  for (const b of blinkBothTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
+    // Natural blinking (more frequent, random length)
+    if (t > nextBlinkT){ nextBlinkT = t + 2.8 + Math.random()*2.8; lastT = t; }
+    const bDur = 0.24 + Math.random()*0.08; // 0.24–0.32s
+    const bPhase = Math.max(0, 1 - Math.abs((t-lastT) - bDur*0.5)/(bDur*0.5));
+    const bLevel = THREE.MathUtils.clamp(bPhase, 0, 1);
+    for (const b of blinkLeftTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
+    for (const b of blinkRightTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
+    for (const b of blinkBothTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
+
+    // Eye saccades: subtle gaze shifts if eye bones exist
+    if ((eyeLeftBone || eyeRightBone) && headBone){
+      gaze.t -= clock.getDelta();
+      if (gaze.t <= 0){
+        gaze.t = 0.6 + Math.random()*1.2;
+        gaze.x = (Math.random()*2-1) * 0.12; // ±0.12 rad
+        gaze.y = (Math.random()*2-1) * 0.08; // ±0.08 rad
+      }
+      const gx = gaze.x, gy = gaze.y;
+      if (eyeLeftBone){ eyeLeftBone.rotation.y = THREE.MathUtils.lerp(eyeLeftBone.rotation.y, gx, 0.08);
+                        eyeLeftBone.rotation.x = THREE.MathUtils.lerp(eyeLeftBone.rotation.x, gy, 0.08); }
+      if (eyeRightBone){ eyeRightBone.rotation.y = THREE.MathUtils.lerp(eyeRightBone.rotation.y, gx, 0.08);
+                         eyeRightBone.rotation.x = THREE.MathUtils.lerp(eyeRightBone.rotation.x, gy, 0.08); }
+    }
 
     // Smile indicator
-    if (sLevel > 0.33 && prevSmileLevel <= 0.33) { showSubtitle('[smiles]', 1200); }
+    if (sLevel > 0.33 && prevSmileLevel <= 0.33) { showSubtitle('[smiles]', 1200); exprPulse.smile = 1.0; }
     prevSmileLevel = sLevel;
 
     controls.update();
@@ -262,6 +297,18 @@ async function init3D(url){
     renderer.setSize(W,H); camera.aspect = W/H; camera.updateProjectionMatrix();
     if (root) frameObject(root);
   });
+
+  // Pointer-driven subtle gaze targeting (if eye bones exist)
+  let lastPointerAt = 0;
+  window.addEventListener('pointermove', (ev)=>{
+    if(!(eyeLeftBone||eyeRightBone)) return;
+    const x = ev.clientX / window.innerWidth;
+    const y = ev.clientY / window.innerHeight;
+    gaze.x = (x - 0.5) * 0.22;   // left/right
+    gaze.y = (0.5 - y) * 0.14;   // up/down
+    gaze.t = 0.6;                // hold this target for a bit
+    lastPointerAt = performance.now();
+  }, {passive:true});
 
   threeReady = true;
 }
@@ -566,6 +613,13 @@ stopBtn.onclick = ()=>{
 };
 // Quick test to verify TTS + lip-sync without typing
 testBtn.onclick = ()=>{ enqueueSpeak("Hi, I'm Rem. Nice to meet you."); };
+
+// Suggestions chips
+for (const b of suggestionButtons()){
+  b.addEventListener('click', ()=>{
+    const v = b.getAttribute('data-say')||''; if(v){ talk(v); }
+  });
+}
 
 // Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
 ['pointerdown','keydown'].forEach(evt=>{
