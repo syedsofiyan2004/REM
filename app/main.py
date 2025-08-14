@@ -49,7 +49,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 def root():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    # Disable caching for the shell HTML so updates (like audio/animation fixes) deploy reliably
+    return FileResponse(str(STATIC_DIR / "index.html"), headers={"Cache-Control": "no-store"})
 
 @app.get("/api/health")
 def health():
