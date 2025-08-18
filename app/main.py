@@ -139,12 +139,12 @@ CHAT_MAX_CONCURRENCY = int(os.getenv("CHAT_MAX_CONCURRENCY", "4"))
 _chat_gate = threading.Semaphore(CHAT_MAX_CONCURRENCY)
 
 STYLE_GUIDES = {
-    "witty": "Style: Be witty, playful, and concise with light, tasteful humor. No insults or rudeness.",
-    "precise": "Style: Be brief, direct, and factual. Use short sentences.",
-    "empathetic": "Style: Be warm, supportive, and encouraging. Focus on understanding feelings.",
+    "witty": "Style: Witty, playful, and concise. Use tasteful humor, friendly teasing, and natural contractions.",
+    "precise": "Style: Direct and clear. Short sentences, minimal filler.",
+    "empathetic": "Style: Warm, supportive, and validating. Brief, caring responses.",
     "spicy": (
-        "Style: Be flirty and cheeky in a PG-13 way. Keep it respectful and consensual, avoid sexual or explicit content,"
-        " never involve minors, and immediately decline sexual requests. Use playful compliments and light banter only."
+        "Style: Flirty, cheeky, and charming (PG-13). Be respectful and consensual. No explicit content or slurs; "
+        "keep it playful with compliments and light banter only. Politely decline crossing any boundary."
     ),
 }
 
@@ -153,13 +153,25 @@ def _compose_system(base: str, style: Optional[str]) -> str:
     guide = STYLE_GUIDES.get(s)
     return f"{base}\n\n{guide}" if guide else base
 
+def _user_for_style(text: str, style: Optional[str]) -> str:
+    s = (style or "").strip().lower()
+    if s in {"witty","spicy"}:
+        # Nudge to conversational phrasing without changing intent
+        return text
+    return text
+
 def bedrock_reply(system_prompt: str, session_id: str, user_text: str, style: Optional[str] = None) -> str:
     messages = get_msgs(session_id)
-    messages.append({"role":"user","content":[{"type":"text","text":user_text}]})
+    messages.append({"role":"user","content":[{"type":"text","text":_user_for_style(user_text, style)}]})
+    s = (style or "").strip().lower()
+    temp = 0.7
+    if s in ("witty","spicy"): temp = 0.9
+    elif s == "precise": temp = 0.4
+    elif s == "empathetic": temp = 0.7
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 360,
-        "temperature": 0.7,     # a touch more variety
+    "max_tokens": 480,
+        "temperature": temp,     # style-aware variety
         "top_p": 0.9,
         "system": _compose_system(system_prompt, style),
         "messages": messages,
@@ -186,11 +198,16 @@ def bedrock_reply(system_prompt: str, session_id: str, user_text: str, style: Op
             out += block.get("text") or ""
     return clamp_sentences(enforce_identity(out) or "I'm here.")
 
-def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list):
+def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list, style: Optional[str] = None):
+    s = (style or "").strip().lower()
+    temp = 0.7
+    if s in ("witty","spicy"): temp = 0.9
+    elif s == "precise": temp = 0.4
+    elif s == "empathetic": temp = 0.7
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-    "max_tokens": 360,
-        "temperature": 0.7,
+    "max_tokens": 480,
+        "temperature": temp,
         "top_p": 0.9,
         "system": system_prompt,
         "messages": messages,
@@ -529,7 +546,7 @@ def chat_stream(payload: ChatStreamIn):
     if not txt:
         raise HTTPException(400, "Empty text")
 
-    messages = get_msgs(sid) + [{"role":"user","content":[{"type":"text","text": txt}]}]
+    messages = get_msgs(sid) + [{"role": "user", "content": [{"type": "text", "text": txt}]}]
     system_prompt = _compose_system(PERSONA_BLESSED_BOY, payload.style)
 
     def gen():
@@ -540,7 +557,7 @@ def chat_stream(payload: ChatStreamIn):
                 yield (json.dumps({"error": "Chat busy, try again shortly"}) + "\n").encode("utf-8")
                 return
             try:
-                for token in _stream_bedrock_text(BEDROCK_MODEL, system_prompt, messages):
+                for token in _stream_bedrock_text(BEDROCK_MODEL, system_prompt, messages, payload.style):
                     token = token.replace("\n", " ")
                     buff.append(token)
                     yield (json.dumps({"delta": token}) + "\n").encode("utf-8")
