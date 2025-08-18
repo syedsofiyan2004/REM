@@ -2,7 +2,7 @@ import base64, json, os, re, html, time, threading, random
 import logging
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +24,7 @@ except Exception:
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "ap-south-1")
 BEDROCK_MODEL  = os.getenv("BEDROCK_MODEL",  "anthropic.claude-3-haiku-20240307-v1:0")
 POLLY_REGION   = os.getenv("POLLY_REGION",   "ap-south-1")
+POLLY_FALLBACK_REGION = os.getenv("POLLY_FALLBACK_REGION", "us-east-1")
 POLLY_VOICE    = os.getenv("POLLY_VOICE",    "Ruth")   # will auto-fallback if region lacks Ruth
 POLLY_RATE     = os.getenv("POLLY_RATE",     "medium")
 POLLY_PITCH    = os.getenv("POLLY_PITCH",    "+4%")
@@ -38,6 +39,21 @@ polly   = boto3.client(
     config=Config(region_name=POLLY_REGION, retries={"max_attempts": 3, "mode": "standard"})
 )
 
+# Optional fallback region (keeps the same voice, different region)
+polly_fb = None
+if POLLY_FALLBACK_REGION and POLLY_FALLBACK_REGION != POLLY_REGION:
+    try:
+        polly_fb = boto3.client(
+            "polly",
+            config=Config(region_name=POLLY_FALLBACK_REGION, retries={"max_attempts": 3, "mode": "standard"})
+        )
+    except Exception:
+        polly_fb = None
+
+def _polly_clients():
+    # Try primary region first, then fallback if configured
+    return [c for c in (polly, polly_fb) if c is not None]
+
 # ---- app --------------------------------------------------------------------
 app = FastAPI()
 logger = logging.getLogger("blessedboy")
@@ -49,7 +65,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 def root():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    # Disable caching for the shell HTML so updates (like audio/animation fixes) deploy reliably
+    return FileResponse(str(STATIC_DIR / "index.html"), headers={"Cache-Control": "no-store"})
 
 @app.get("/api/health")
 def health():
@@ -74,13 +91,22 @@ def get_msgs(session_id: str) -> List[Dict]:
 class ChatIn(BaseModel):
     text: str
     session_id: str = "local"
+    style: Optional[str] = None  # conversational style (e.g., 'witty','precise','empathetic')
 
 class TTSIn(BaseModel):
     text: str
+    lang: Optional[str] = None   # e.g., 'en','es','fr'
+    mode: Optional[str] = None   # 'auto' chooses a female voice by language; default uses Ruth
 
 class ChatStreamIn(BaseModel):
     text: str
     session_id: str = "local"
+    style: Optional[str] = None
+
+class SingIn(BaseModel):
+    text: str  # user-provided lyrics only
+    lang: Optional[str] = None
+    mode: Optional[str] = None  # 'auto' to select a native female voice for that language
 
 # ---- helpers ----------------------------------------------------------------
 ACTION_PATTERNS = [
@@ -99,6 +125,8 @@ def enforce_identity(text: str) -> str:
     t = re.sub(r"\bClaude\b", "Rem", text, flags=re.I)
     t = re.sub(r"\bBlessed Boy\b", "Rem", t, flags=re.I)
     t = re.sub(r"\bAnthropic\b", "my team", t, flags=re.I)
+    # Remove leading assistant name tags like "Rem:", "Rem -", "Rem." at the start
+    t = re.sub(r"^\s*Rem\s*[:\-–—.,]\s*", "", t, flags=re.I)
     return strip_stage(t)
 
 def clamp_sentences(text: str, n: int = 2) -> str:
@@ -110,15 +138,30 @@ BEDROCK_MAX_RETRIES = int(os.getenv("BEDROCK_MAX_RETRIES", "3"))
 CHAT_MAX_CONCURRENCY = int(os.getenv("CHAT_MAX_CONCURRENCY", "4"))
 _chat_gate = threading.Semaphore(CHAT_MAX_CONCURRENCY)
 
-def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
+STYLE_GUIDES = {
+    "witty": "Style: Be witty, playful, and concise with light, tasteful humor. No insults or rudeness.",
+    "precise": "Style: Be brief, direct, and factual. Use short sentences.",
+    "empathetic": "Style: Be warm, supportive, and encouraging. Focus on understanding feelings.",
+    "spicy": (
+        "Style: Be flirty and cheeky in a PG-13 way. Keep it respectful and consensual, avoid sexual or explicit content,"
+        " never involve minors, and immediately decline sexual requests. Use playful compliments and light banter only."
+    ),
+}
+
+def _compose_system(base: str, style: Optional[str]) -> str:
+    s = (style or "").strip().lower()
+    guide = STYLE_GUIDES.get(s)
+    return f"{base}\n\n{guide}" if guide else base
+
+def bedrock_reply(system_prompt: str, session_id: str, user_text: str, style: Optional[str] = None) -> str:
     messages = get_msgs(session_id)
     messages.append({"role":"user","content":[{"type":"text","text":user_text}]})
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 260,
+        "max_tokens": 360,
         "temperature": 0.7,     # a touch more variety
         "top_p": 0.9,
-        "system": system_prompt,
+        "system": _compose_system(system_prompt, style),
         "messages": messages,
     }
     last_err = None
@@ -146,7 +189,7 @@ def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
 def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list):
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 260,
+    "max_tokens": 360,
         "temperature": 0.7,
         "top_p": 0.9,
         "system": system_prompt,
@@ -177,78 +220,154 @@ def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list):
     raise last_err or RuntimeError("Bedrock stream retries exhausted")
 
 # ---- Polly TTS (SSML pacing + visemes) --------------------------------------
-def make_ssml(text: str) -> str:
+def _normalize_lang(lang: Optional[str]) -> Optional[str]:
+    if not lang: return None
+    l = lang.strip().lower()
+    # Normalize to IETF-like codes Polly expects
+    m = {
+        "es": "es-ES", "es-es": "es-ES", "es-mx": "es-MX",
+        "fr": "fr-FR", "fr-fr": "fr-FR", "fr-ca": "fr-CA",
+        "hi": "hi-IN", "hi-in": "hi-IN",
+        "en": "en-US",
+    }
+    return m.get(l, None)
+
+def make_ssml(text: str, lang: Optional[str] = None) -> str:
     import re as _re
     sents = [html.escape(s.strip()) for s in _re.split(r'(?<=[.!?])\s+', text) if s.strip()]
     inner = "<break time='80ms'/>".join(f"<s>{s}</s><break time='120ms'/>" for s in sents)
+    lang_norm = _normalize_lang(lang)
+    if lang_norm:
+        return f"<speak><lang xml:lang='{lang_norm}'><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></lang></speak>"
     return f"<speak><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></speak>"
 
-_VOICES_CACHE = None
-def _get_voices():
-    global _VOICES_CACHE
-    if _VOICES_CACHE is None:
+def make_sing_ssml(text: str, lang: Optional[str] = None) -> str:
+    """A playful singing SSML: slower rate, gentle vibrato-like pitch changes, clear phrasing.
+    Note: Polly doesn't support true singing; this simulates a tuneful delivery.
+    """
+    import re as _re
+    words = [w for w in _re.split(r"(\s+)", text.strip()) if w]
+    pitches = [+8, +4, +2, +6, +3, +1, +5, +2]
+    parts = []
+    i = 0
+    for w in words:
+        if w.isspace():
+            parts.append(w)
+        else:
+            p = pitches[i % len(pitches)]
+            parts.append(f"<prosody pitch='{p}%'>" + html.escape(w) + "</prosody>")
+            i += 1
+    inner = "".join(parts)
+    # Slower rate and phrasing
+    body = f"<prosody rate='slow'>{inner}</prosody>"
+    lang_norm = _normalize_lang(lang)
+    if lang_norm:
+        return f"<speak><lang xml:lang='{lang_norm}'>{body}</lang></speak>"
+    return f"<speak>{body}</speak>"
+
+_VOICES_CACHE = {}
+def _get_voices(client=None):
+    """Cache voices per region client."""
+    c = client or polly
+    key = getattr(c.meta, "region_name", "default")
+    if key not in _VOICES_CACHE:
         try:
-            _VOICES_CACHE = polly.describe_voices().get("Voices", [])
+            _VOICES_CACHE[key] = c.describe_voices().get("Voices", [])
         except Exception:
-            _VOICES_CACHE = []
-    return _VOICES_CACHE
+            _VOICES_CACHE[key] = []
+    return _VOICES_CACHE[key]
 
 def _choose_voice(preferred: str, engine: str) -> str:
-    voices = _get_voices()
-    pref_lower = (preferred or "").lower()
-    # 1) exact preferred with engine
-    for v in voices:
-        if v.get("Id","").lower()==pref_lower and engine in set(v.get("SupportedEngines",[])):
-            return v["Id"]
-    # 2) any EN Female voice with engine (match Rem persona)
-    for v in voices:
-        if (
-            v.get("LanguageCode", "").startswith("en")
-            and v.get("Gender") == "Female"
-            and engine in set(v.get("SupportedEngines", []))
-        ):
-            return v["Id"]
-    # 3) any EN voice with engine
-    for v in voices:
-        if v.get("LanguageCode", "").startswith("en") and engine in set(v.get("SupportedEngines", [])):
-            return v["Id"]
-    # 4) any voice with engine
-    for v in voices:
-        if engine in set(v.get("SupportedEngines",[])):
-            return v["Id"]
-    # 5) last resort: preferred
+    """Return the preferred voice only (strict). Engine compatibility is handled by callers.
+
+    We purposely do NOT fall back to other voices to avoid switching timbre mid-session.
+    If the preferred voice is unavailable for the requested engine, the synth call will raise
+    (e.g., EngineNotSupportedException or InvalidVoiceIdException) and the caller may try
+    another engine (e.g., standard instead of neural).
+    """
     return preferred
 
-def _synthesize_audio(clean: str) -> Tuple[bytes, str, str]:
-    """Return (audio_bytes, engine_used, voice_used)."""
+def _synthesize_audio(clean: str, voice: str, lang: Optional[str] = None) -> Tuple[bytes, str, str, any]:
+    """Return (audio_bytes, engine_used, voice_used, polly_client_used).
+
+    Always uses the preferred voice (POLLY_VOICE). Tries neural/standard and
+    will switch to a fallback region if necessary, but never changes the voice.
+    """
     plan = [
-        ("neural",   "ssml", make_ssml(clean)),
-        ("standard", "ssml", make_ssml(clean)),
+        ("neural",   "ssml", make_ssml(clean, lang)),
+        ("standard", "ssml", make_ssml(clean, lang)),
         ("neural",   "text", clean),
         ("standard", "text", clean),
     ]
     last = None
-    for engine, text_type, text in plan:
-        voice = _choose_voice(POLLY_VOICE, engine)
-        try:
-            r = polly.synthesize_speech(
-                VoiceId=voice, OutputFormat="mp3",
-                Text=text, TextType=text_type, Engine=engine
-            )
-            return r["AudioStream"].read(), engine, voice
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
-                        "InvalidVoiceIdException","UnsupportedPlsAlphabetException","LanguageNotSupportedException",
-                        "ValidationException"}:
-                last = e; continue
-            raise
+    for client in _polly_clients():
+        for engine, text_type, text in plan:
+            voice_id = voice
+            try:
+                r = client.synthesize_speech(
+                    VoiceId=voice_id, OutputFormat="mp3",
+                    Text=text, TextType=text_type, Engine=engine
+                )
+                # If we had to use fallback region, log once
+                try:
+                    region = getattr(client.meta, "region_name", "")
+                    if region and region != POLLY_REGION:
+                        logger.warning(
+                            "Polly voice %s synthesized from fallback region %s (primary %s)",
+                            voice_id, region, POLLY_REGION
+                        )
+                except Exception:
+                    pass
+                return r["AudioStream"].read(), engine, voice_id, client
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
+                            "InvalidVoiceIdException","UnsupportedPlsAlphabetException","LanguageNotSupportedException",
+                            "ValidationException"}:
+                    last = e; continue
+                raise
+        # try next client (fallback region)
     if last: raise last
     raise RuntimeError("Polly synthesis failed")
 
-def _visemes(clean: str, engine: str, voice: str) -> list:
+def _synthesize_ssml(ssml: str, voice: str) -> Tuple[bytes, str, str, any]:
+    plan = [
+        ("neural",   "ssml"),
+        ("standard", "ssml"),
+    ]
+    last = None
+    for client in _polly_clients():
+        for engine, text_type in plan:
+            voice_id = voice
+            try:
+                r = client.synthesize_speech(
+                    VoiceId=voice_id, OutputFormat="mp3",
+                    Text=ssml, TextType=text_type, Engine=engine
+                )
+                try:
+                    region = getattr(client.meta, "region_name", "")
+                    if region and region != POLLY_REGION:
+                        logger.warning(
+                            "Polly voice %s synthesized from fallback region %s (primary %s)",
+                            voice_id, region, POLLY_REGION
+                        )
+                except Exception:
+                    pass
+                return r["AudioStream"].read(), engine, voice_id, client
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
+                            "InvalidVoiceIdException","UnsupportedPlsAlphabetException","LanguageNotSupportedException",
+                            "ValidationException"}:
+                    last = e; continue
+                raise
+    if last: raise last
+    raise RuntimeError("Polly SSML synthesis failed")
+
+def _visemes(clean: str, engine: str, voice: str, client=None) -> list:
+    c = client or polly
     try:
-        r = polly.synthesize_speech(
+        r = c.synthesize_speech(
             Text=clean, VoiceId=voice, OutputFormat="json",
             SpeechMarkTypes=["viseme"], Engine=engine
         )
@@ -256,10 +375,93 @@ def _visemes(clean: str, engine: str, voice: str) -> list:
     except Exception:
         return []
 
-def polly_tts_with_visemes(text: str) -> Tuple[str, list]:
+VOICE_MAP = {
+    # English
+    "en": "Ruth",
+    # Spanish
+    "es": "Lucia",      # Spain (Neural female)
+    "es-mx": "Mia",     # Mexico (Neural female)
+    # French
+    "fr": "Lea",        # France (Neural female) — fallback to Celine if unavailable
+    "fr-fr": "Lea",
+    "fr-ca": "Chantal",  # Canada (female)
+    # Hindi
+    "hi": "Aditi",       # Bilingual hi-IN / en-IN female
+    # Other examples kept
+    "de": "Vicki",
+    "it": "Bianca",
+    "pt": "Camila",
+    "ja": "Mizuki",
+    "ko": "Seoyeon",
+    "zh": "Zhiyu",
+    "ar": "Zeina",
+    "nl": "Lotte",
+    "sv": "Astrid",
+    "da": "Naja",
+    "nb": "Liv",
+    "pl": "Maja",
+    "ru": "Tatyana",
+    "tr": "Filiz",
+}
+
+def _voice_candidates(lang_hint: Optional[str], mode: Optional[str]) -> List[str]:
+    if (mode or "").lower() != "auto":
+        return [POLLY_VOICE]
+    hint = (lang_hint or "en").lower()
+    base = hint.split("-")[0]
+    # Preference lists per dialect
+    prefs = {
+        "es-mx": ["Mia", "Lucia"],
+        "es-es": ["Lucia", "Mia"],
+        "es":    ["Lucia", "Mia"],
+        "fr-ca": ["Chantal", "Lea", "Celine"],
+        "fr-fr": ["Lea", "Celine", "Chantal"],
+        "fr":    ["Lea", "Celine"],
+        "hi-in": ["Aditi"],
+        "hi":    ["Aditi"],
+        "en":    [POLLY_VOICE],
+    }
+    return prefs.get(hint) or prefs.get(f"{base}-{'mx' if base=='es' else 'fr' if base=='fr' else 'in' if base=='hi' else ''}") or prefs.get(base) or [VOICE_MAP.get(hint) or VOICE_MAP.get(base) or VOICE_MAP["en"]]
+
+def polly_tts_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
     clean = strip_stage(text) or text
-    audio, engine, voice = _synthesize_audio(clean)
-    marks = _visemes(clean, engine, voice)
+    candidates = _voice_candidates(lang, mode)
+    last_exc = None
+    for v in candidates:
+        try:
+            audio, engine, used_voice, client = _synthesize_audio(clean, v, lang)
+            marks = _visemes(clean, engine, used_voice, client)
+            return base64.b64encode(audio).decode("ascii"), marks
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in {"InvalidVoiceIdException","LanguageNotSupportedException","ValidationException","EngineNotSupportedException"}:
+                last_exc = e; continue
+            raise
+    if last_exc: raise last_exc
+    # Fallback to default
+    audio, engine, used_voice, client = _synthesize_audio(clean, POLLY_VOICE, lang)
+    marks = _visemes(clean, engine, used_voice, client)
+    return base64.b64encode(audio).decode("ascii"), marks
+
+def polly_sing_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
+    clean = strip_stage(text) or text
+    ssml = make_sing_ssml(clean, lang)
+    candidates = _voice_candidates(lang, mode)
+    last_exc = None
+    for v in candidates:
+        try:
+            audio, engine, used_voice, client = _synthesize_ssml(ssml, v)
+            # For visemes, use the clean text (not SSML) with the same engine/client
+            marks = _visemes(clean, engine, used_voice, client)
+            return base64.b64encode(audio).decode("ascii"), marks
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in {"InvalidVoiceIdException","LanguageNotSupportedException","ValidationException","EngineNotSupportedException","InvalidSsmlException"}:
+                last_exc = e; continue
+            raise
+    if last_exc: raise last_exc
+    audio, engine, used_voice, client = _synthesize_ssml(ssml, POLLY_VOICE)
+    marks = _visemes(clean, engine, used_voice, client)
     return base64.b64encode(audio).decode("ascii"), marks
 
 # ---- API --------------------------------------------------------------------
@@ -282,7 +484,7 @@ def chat(payload: ChatIn):
             elif q in {"what's your name","whats your name","your name?","who are you"}:
                 reply = "Rem."
             else:
-                reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
+                reply = bedrock_reply(_compose_system(PERSONA_BLESSED_BOY, payload.style), sid, txt, payload.style)
 
             add_turn(sid, "user", txt)
             add_turn(sid, "assistant", reply)
@@ -304,6 +506,7 @@ def chat_stream(payload: ChatStreamIn):
         raise HTTPException(400, "Empty text")
 
     messages = get_msgs(sid) + [{"role":"user","content":[{"type":"text","text": txt}]}]
+    system_prompt = _compose_system(PERSONA_BLESSED_BOY, payload.style)
 
     def gen():
         try:
@@ -313,7 +516,7 @@ def chat_stream(payload: ChatStreamIn):
                 yield (json.dumps({"error": "Chat busy, try again shortly"}) + "\n").encode("utf-8")
                 return
             try:
-                for token in _stream_bedrock_text(BEDROCK_MODEL, PERSONA_BLESSED_BOY, messages):
+                for token in _stream_bedrock_text(BEDROCK_MODEL, system_prompt, messages):
                     token = token.replace("\n", " ")
                     buff.append(token)
                     yield (json.dumps({"delta": token}) + "\n").encode("utf-8")
@@ -329,7 +532,7 @@ def chat_stream(payload: ChatStreamIn):
             if code in {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}:
                 # Fallback: get a full reply non-streaming and send once
                 try:
-                    reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
+                    reply = bedrock_reply(_compose_system(PERSONA_BLESSED_BOY, payload.style), sid, txt, payload.style)
                     yield (json.dumps({"delta": reply}) + "\n").encode("utf-8")
                 except Exception:
                     yield (json.dumps({"error": f"Bedrock error: {code}"}) + "\n").encode("utf-8")
@@ -374,8 +577,11 @@ def tts(payload: TTSIn):
     if not txt:
         raise HTTPException(400, "Empty text")
     try:
-        # Cache by normalized text
-        key = re.sub(r"\s+", " ", txt).strip().lower()
+        # Cache by normalized text, including language and mode to avoid cross-voice collisions
+        norm_txt = re.sub(r"\s+", " ", txt).strip().lower()
+        lang_key = (payload.lang or "").strip().lower()
+        mode_key = (payload.mode or "").strip().lower()
+        key = f"{lang_key}|{mode_key}|{norm_txt}"
         cached = _tts_cache_get(key)
         if cached:
             audio_b64, marks = cached
@@ -389,7 +595,7 @@ def tts(payload: TTSIn):
             last_err = None
             for attempt in range(3):
                 try:
-                    audio_b64, marks = polly_tts_with_visemes(txt)
+                    audio_b64, marks = polly_tts_with_visemes(txt, payload.lang, payload.mode)
                     _tts_cache_put(key, audio_b64, marks)
                     break
                 except ClientError as e:
@@ -415,6 +621,54 @@ def tts(payload: TTSIn):
         raise HTTPException(500, f"Polly error: {code} - {msg}")
     except Exception as e:
         raise HTTPException(500, f"TTS failure: {e.__class__.__name__}")
+@app.post("/api/sing")
+def sing(payload: SingIn):
+    txt = (payload.text or "").strip()
+    if not txt:
+        raise HTTPException(400, "Provide lyrics to sing.")
+    # This feature uses user-provided lyrics. We do not fetch or provide copyrighted lyrics.
+    try:
+        # Cache key includes a 'sing:' prefix
+        norm_txt = re.sub(r"\s+", " ", txt).strip().lower()
+        lang_key = (payload.lang or "").strip().lower()
+        mode_key = (payload.mode or "").strip().lower()
+        key = f"sing:{lang_key}|{mode_key}|{norm_txt}"
+        cached = _tts_cache_get(key)
+        if cached:
+            audio_b64, marks = cached
+            return {"audio_b64": audio_b64, "marks": marks}
+
+        acquired = _tts_gate.acquire(timeout=10)
+        if not acquired:
+            raise HTTPException(429, "TTS busy, try again shortly")
+        try:
+            last_err = None
+            for attempt in range(3):
+                try:
+                    audio_b64, marks = polly_sing_with_visemes(txt, payload.lang, payload.mode or 'auto')
+                    _tts_cache_put(key, audio_b64, marks)
+                    break
+                except ClientError as e:
+                    code = e.response.get("Error", {}).get("Code", "ClientError")
+                    if code in {"ThrottlingException","TooManyRequestsException","ServiceUnavailableException"}:
+                        last_err = e; _retry_sleep(attempt); continue
+                    raise
+                except Exception as e:
+                    last_err = e; _retry_sleep(attempt)
+            else:
+                raise last_err or RuntimeError("SING retries exhausted")
+        finally:
+            try: _tts_gate.release()
+            except Exception: pass
+        return {"audio_b64": audio_b64, "marks": marks}
+    except ClientError as e:
+        err = e.response.get("Error", {})
+        code = err.get("Code", "ClientError")
+        msg = err.get("Message", "")
+        logger.error("Polly error %s: %s", code, msg)
+        raise HTTPException(500, f"Polly error: {code} - {msg}")
+    except Exception as e:
+        raise HTTPException(500, f"Sing failure: {e.__class__.__name__}")
 
 @app.get("/api/polly/voices")
 def list_voices():

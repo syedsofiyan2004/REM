@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <title>Rem — Companion</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0b0e14" />
 <script type="importmap">
 {
   "imports": {
@@ -16,7 +17,7 @@
   *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif}
   html,body{height:100%;margin:0;background:#0b0e14;color:var(--fg);overflow:hidden}
   #scene3d{position:fixed;inset:0;z-index:0;background:#0c0f18}
-  #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,90vw);
+  #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,96vw);
          display:flex;flex-direction:column;gap:12px;padding:18px;
          background:linear-gradient(180deg,#0b1020a0,#0b1020a0);backdrop-filter:blur(8px);
     border-left:1px solid #1e2a3f;z-index:2;
@@ -29,8 +30,8 @@
   input,button{font:15px/1.2 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
   input{flex:1;min-width:0} button{cursor:pointer;font-weight:600}
   button:hover{filter:brightness(1.06)} button:disabled{opacity:.55;cursor:not-allowed}
-  #voicebar{position:fixed;left:16px;bottom:16px;z-index:2;display:flex;align-items:center;gap:10px;
-            background:var(--glass);border:1px solid #1e2a3f;padding:8px 12px;border-radius:12px}
+  #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:8px;
+            background:var(--glass);border:1px solid #1e2a3f;padding:8px 10px;border-radius:12px;flex-wrap:wrap}
   .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#0e1627;border:1px solid #26344b;font-size:13px}
   .dot{width:10px;height:10px;border-radius:50%;background:#78859a}.dot.on{background:var(--green);box-shadow:0 0 10px var(--green)}
   #badge{position:fixed;top:16px;left:16px;z-index:2;padding:8px 12px;border-radius:12px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700;letter-spacing:.3px}
@@ -42,6 +43,14 @@
   #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
     padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#b9c6db;
     font-size:12.5px}
+  /* Mobile tweaks */
+  @media (max-width: 768px){
+    #panel{width:100vw; padding:14px}
+    #badge{top:auto; bottom:calc(env(safe-area-inset-bottom, 0px) + 72px)}
+    #subtitle{bottom:30%}
+    #voicebar{left:8px; right:8px;}
+    input,button{font-size:16px} /* bigger tap targets */
+  }
 </style>
 </head>
 <body>
@@ -58,17 +67,40 @@
       <input id="inp" placeholder="Say something…" />
       <button id="send">Send</button>
     </div>
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
+  <button class="pill" data-say="Tell me a short story about kindness.">💡 Story</button>
+  <button class="pill" data-say="Guide me through a 30-second breathing exercise.">🧘 Breathe</button>
+  <button class="pill" data-say="Teach me a fun fact about space.">🛰️ Space</button>
+  <button class="pill" data-say="Help me plan a quick healthy snack.">🥗 Snack</button>
+  <!-- Style quick toggles (Grok-like modes) -->
+  <button class="pill style" data-style="witty" title="Witty mode">✨ Witty</button>
+  <button class="pill style" data-style="empathetic" title="Empathetic mode">💞 Empathetic</button>
+  <button class="pill style" data-style="precise" title="Precise mode">🧠 Precise</button>
+  <button class="pill style" data-style="spicy" title="Flirty but safe">🌶️ Spicy</button>
+  <button class="pill" id="cardBtn" title="Quick knowledge card">🃏 Card</button>
+    </div>
   </aside>
 
   <div id="voicebar">
     <button id="mic">🎙️ Start Voice</button>
     <button id="stop" disabled>⏹️ Stop</button>
   <button id="test">▶️ Test Voice</button>
+  <button id="sing">🎵 Sing</button>
+  <button id="spicyBar" class="pill" title="Flirty but safe">🌶️ Spicy</button>
+  <button id="cardBtnBar" class="pill" title="Quick knowledge card">🃏 Card</button>
+    <select id="langsel" class="pill" title="TTS language">
+      <option value="en" selected>English (Ruth)</option>
+      <option value="es">Español (España)</option>
+      <option value="es-mx">Español (México)</option>
+      <option value="fr">Français (France)</option>
+      <option value="fr-ca">Français (Canada)</option>
+      <option value="hi">हिंदी</option>
+    </select>
+  <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
 
 <script type="module">
-/* ====== Put your Ready Player Me GLB URL here (with ARKit morphs) ====== */
 const RPM_AVATAR_URL =
   "/static/models/blessedboy.glb";
 
@@ -86,11 +118,39 @@ const sendBtn   = document.getElementById('send');
 const micBtn    = document.getElementById('mic');
 const stopBtn   = document.getElementById('stop');
 const testBtn   = document.getElementById('test');
+const singBtn   = document.getElementById('sing');
+const langSel   = document.getElementById('langsel');
+const spicyBar  = document.getElementById('spicyBar');
+const cardBtnBar= document.getElementById('cardBtnBar');
+const pttToggle = document.getElementById('pttToggle');
 const micdot    = document.getElementById('micdot');
 const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
 const hambtn    = document.getElementById('hambtn');
 const subtitle  = document.getElementById('subtitle');
+const suggestionButtons = () => Array.from(document.querySelectorAll('#panel .pill[data-say]'));
+const styleButtons = () => Array.from(document.querySelectorAll('#panel .pill.style'));
+// Typing indicator
+let typingEl; (function(){ typingEl = document.createElement('div'); typingEl.className='bubble bot'; typingEl.textContent='…'; typingEl.style.opacity='0.6'; })();
+let selectedStyle = null;
+// Reaction chips UI (floating emoji near subtitle)
+const reactions = ['👏','😂','😮','😅','😍','👍','🙏'];
+function floatReaction(emoji){
+  const el = document.createElement('div');
+  el.textContent = emoji; el.style.position='fixed'; el.style.zIndex='3';
+  const rect = subtitle.getBoundingClientRect();
+  el.style.left = (rect.left + rect.width/2 + (Math.random()*60-30))+'px';
+  el.style.top = (rect.top - 10 + (Math.random()*20-10))+'px';
+  el.style.fontSize='28px'; el.style.transition='transform 1s ease, opacity 1s ease';
+  document.body.appendChild(el);
+  requestAnimationFrame(()=>{ el.style.transform='translateY(-50px)'; el.style.opacity='0'; });
+  setTimeout(()=>{ el.remove(); }, 1100);
+}
+const rxBar = document.createElement('div'); rxBar.style.position='fixed'; rxBar.style.zIndex='3';
+rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='22%';
+rxBar.style.display='flex'; rxBar.style.gap='6px';
+reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
+document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
 
 /* ====== log ====== */
 function add(text, who){
@@ -103,9 +163,12 @@ function add(text, who){
 /* ====== 3D avatar (deferred) ====== */
 let renderer, scene, camera, controls, clock;
 let jawTargets=[], smileTargets=[], blinkLeftTargets=[], blinkRightTargets=[], blinkBothTargets=[], headBone=null, jawBone=null, root=null;
+let eyeLeftBone=null, eyeRightBone=null; // optional eye bones if present
 let jawEnergy=0, threeReady=false;
 let smile=0, blink=0, nextBlinkT=0, lastT=0, prevSmileLevel=0;
 let entrance = { active: true, startT: 0, fromZ: 0, toZ: 0 };
+let exprPulse = { smile: 0, winkL: 0, winkR: 0 }; // short-lived expression pulses
+let gaze = { x: 0, y: 0, t: 0 }; // eye saccades target
 
 function setJawEnergy(level){ jawEnergy = Math.max(0, Math.min(1, level)); }
 function setSmile(level){ smile = Math.max(0, Math.min(1, level)); }
@@ -172,20 +235,28 @@ async function init3D(url){
   }catch{}
 
   root.traverse(o=>{
-    if (/head/i.test(o.name) && !headBone) headBone = o;
-  if (!jawBone && /jaw|mouth/i.test(o.name)) jawBone = o; // fallback bone-based jaw
+    if (/head\b/i.test(o.name) && !headBone) headBone = o;
+    if (!jawBone && /\b(jaw|mouth)\b/i.test(o.name)) jawBone = o; // fallback bone-based jaw
+    // Eye bones (common names): Eye.L/Eye.R, eye_l/eye_r, LeftEye/RightEye
+    if (!eyeLeftBone && /eye[._\s-]*l|left\s*eye/i.test(o.name)) eyeLeftBone = o;
+    if (!eyeRightBone && /eye[._\s-]*r|right\s*eye/i.test(o.name)) eyeRightBone = o;
     if (o.isMesh && o.morphTargetDictionary && o.morphTargetInfluences){
       const dict = o.morphTargetDictionary;
       for (const key in dict){
         const idx = dict[key]; const k = key.toLowerCase();
-        if (k.includes('jawopen') || k.includes('mouthopen') || k.includes('aa') || k.includes('ah')) {
+        // Jaw / mouth open
+        if (/jaw|mouth\s*open|openmouth|aa\b|ah\b|aah|big_ah|vowel_ah/.test(k)) {
           jawTargets.push({ mesh:o, idx });
         }
-        if (k.includes('smile') || k.includes('happy') || k.includes('smirk')) { smileTargets.push({ mesh:o, idx }); }
-        const isBlink = k.includes('blink') || (k.includes('eye') && (k.includes('close') || k.includes('shut')));
-        if (isBlink) {
-          const isLeft = k.includes('left') || k.includes('l ') || k.endsWith('_l') || k.endsWith('.l') || k.includes('eye_l');
-          const isRight = k.includes('right') || k.includes('r ') || k.endsWith('_r') || k.endsWith('.r') || k.includes('eye_r');
+        // Smile variants
+        if (/smile|mouth\s*smile|smileleft|smileright|mouthcornerpull|happy|smirk/.test(k)) {
+          smileTargets.push({ mesh:o, idx });
+        }
+        // Blink variants
+        const blinkLike = /blink|eyelid|eye\s*close|eyesclosed|closeeye|eye\s*shut/.test(k);
+        if (blinkLike) {
+          const isLeft = /left|\bl\b|_l|\.l|eye_l|eye\.l|blinkl/.test(k);
+          const isRight = /right|\br\b|_r|\.r|eye_r|eye\.r|blinkr/.test(k);
           if (isLeft) blinkLeftTargets.push({ mesh:o, idx });
           else if (isRight) blinkRightTargets.push({ mesh:o, idx });
           else blinkBothTargets.push({ mesh:o, idx });
@@ -204,10 +275,10 @@ async function init3D(url){
   root.position.z = entrance.fromZ;
 
   function loop(){
-  const t = clock.getElapsedTime();
+    const t = clock.getElapsedTime();
     // More visible idle motion
-    const yaw = Math.sin(t*0.5) * 0.08;   // ~±4.5°
-    const bob = Math.sin(t*0.9) * 0.035;  // ~3.5 cm
+    const yaw = Math.sin(t*0.5) * 0.10;   // ~±6°
+    const bob = Math.sin(t*0.9) * 0.045;  // a bit more bob
     if (root){
       // Entrance easing (quad out)
       if (entrance.active){
@@ -221,8 +292,8 @@ async function init3D(url){
     }
 
     // Head motion: slight idle nod + speech-driven component
-    const idleNod = Math.sin(t*0.8) * 0.03;     // ~±1.7°
-    const speakNod = (jawEnergy-0.15) * 0.04;   // add a bit more when talking
+    const idleNod = Math.sin(t*0.8) * 0.035;     // ~±2°
+    const speakNod = (jawEnergy-0.12) * 0.06;   // a bit stronger while speaking
     if (headBone) headBone.rotation.x = THREE.MathUtils.lerp(headBone.rotation.x, idleNod + speakNod, 0.15);
 
   // Apply mouth openness to detected morph targets (or rotate jaw bone if no morphs)
@@ -233,22 +304,49 @@ async function init3D(url){
       jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, jawEnergy * maxOpen, 0.2);
     }
 
-  // Smile: subtle when idle, stronger while speaking
-  const idleSmile = 0.08 + Math.max(0, Math.sin(t*0.6))*0.04;
-  const speakSmile = jawEnergy * 0.25;
-  const sLevel = THREE.MathUtils.clamp(idleSmile + speakSmile, 0, 0.5);
-  for (const s of smileTargets){ s.mesh.morphTargetInfluences[s.idx] = THREE.MathUtils.lerp(s.mesh.morphTargetInfluences[s.idx]||0, sLevel, 0.1); }
+  // Smile: stronger and includes short-lived pulses
+    const idleSmile = 0.10 + Math.max(0, Math.sin(t*0.5))*0.07;
+    const speakSmile = jawEnergy * 0.35;
+    exprPulse.smile = Math.max(0, exprPulse.smile - 0.02);
+    const sLevel = THREE.MathUtils.clamp(idleSmile + speakSmile + exprPulse.smile*0.6 + smile*0.2, 0, 0.8);
+  let appliedSmile = false;
+  for (const s of smileTargets){ s.mesh.morphTargetInfluences[s.idx] = THREE.MathUtils.lerp(s.mesh.morphTargetInfluences[s.idx]||0, sLevel, 0.1); appliedSmile = true; }
+  // If no smile morphs exist, emulate expression subtly by head tilt
+  if (!appliedSmile && headBone){ headBone.rotation.z = THREE.MathUtils.lerp(headBone.rotation.z, (jawEnergy*0.08) * (Math.sin(t*0.6)*0.4), 0.08); }
 
-  // Natural blinking
-  if (t > nextBlinkT){ nextBlinkT = t + 3 + Math.random()*3; lastT = t; }
-  const blinkPhase = Math.max(0, 1 - Math.abs((t-lastT) - 0.15)/0.15); // quick close/open ~0.3s
-  const bLevel = THREE.MathUtils.clamp(blinkPhase, 0, 1);
-  for (const b of blinkLeftTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
-  for (const b of blinkRightTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
-  for (const b of blinkBothTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; }
+    // Natural blinking (more frequent, random length)
+    if (t > nextBlinkT){ nextBlinkT = t + 2.8 + Math.random()*2.8; lastT = t; }
+    const bDur = 0.24 + Math.random()*0.08; // 0.24–0.32s
+    const bPhase = Math.max(0, 1 - Math.abs((t-lastT) - bDur*0.5)/(bDur*0.5));
+    const bLevel = THREE.MathUtils.clamp(bPhase, 0, 1);
+    let hasBlinkMorph = false;
+    for (const b of blinkLeftTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; hasBlinkMorph = true; }
+    for (const b of blinkRightTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; hasBlinkMorph = true; }
+    for (const b of blinkBothTargets){ b.mesh.morphTargetInfluences[b.idx] = bLevel; hasBlinkMorph = true; }
+    // If no blink morphs, do a tiny eye-bone blink emulation (pitch down and back)
+    if (!hasBlinkMorph && (eyeLeftBone||eyeRightBone)){
+      const e = (bLevel*0.12);
+      if (eyeLeftBone) eyeLeftBone.rotation.x = THREE.MathUtils.lerp(eyeLeftBone.rotation.x, e, 0.25);
+      if (eyeRightBone) eyeRightBone.rotation.x = THREE.MathUtils.lerp(eyeRightBone.rotation.x, e, 0.25);
+    }
+
+    // Eye saccades: subtle gaze shifts if eye bones exist
+    if ((eyeLeftBone || eyeRightBone) && headBone){
+      gaze.t -= clock.getDelta();
+      if (gaze.t <= 0){
+        gaze.t = 0.6 + Math.random()*1.2;
+        gaze.x = (Math.random()*2-1) * 0.12; // ±0.12 rad
+        gaze.y = (Math.random()*2-1) * 0.08; // ±0.08 rad
+      }
+      const gx = gaze.x, gy = gaze.y;
+      if (eyeLeftBone){ eyeLeftBone.rotation.y = THREE.MathUtils.lerp(eyeLeftBone.rotation.y, gx, 0.08);
+                        eyeLeftBone.rotation.x = THREE.MathUtils.lerp(eyeLeftBone.rotation.x, gy, 0.08); }
+      if (eyeRightBone){ eyeRightBone.rotation.y = THREE.MathUtils.lerp(eyeRightBone.rotation.y, gx, 0.08);
+                         eyeRightBone.rotation.x = THREE.MathUtils.lerp(eyeRightBone.rotation.x, gy, 0.08); }
+    }
 
     // Smile indicator
-    if (sLevel > 0.33 && prevSmileLevel <= 0.33) { showSubtitle('[smiles]', 1200); }
+    if (sLevel > 0.33 && prevSmileLevel <= 0.33) { showSubtitle('[smiles]', 1200); exprPulse.smile = 1.0; }
     prevSmileLevel = sLevel;
 
     controls.update();
@@ -262,6 +360,18 @@ async function init3D(url){
     renderer.setSize(W,H); camera.aspect = W/H; camera.updateProjectionMatrix();
     if (root) frameObject(root);
   });
+
+  // Pointer-driven subtle gaze targeting (if eye bones exist)
+  let lastPointerAt = 0;
+  window.addEventListener('pointermove', (ev)=>{
+    if(!(eyeLeftBone||eyeRightBone)) return;
+    const x = ev.clientX / window.innerWidth;
+    const y = ev.clientY / window.innerHeight;
+    gaze.x = (x - 0.5) * 0.22;   // left/right
+    gaze.y = (0.5 - y) * 0.14;   // up/down
+    gaze.t = 0.6;                // hold this target for a bit
+    lastPointerAt = performance.now();
+  }, {passive:true});
 
   threeReady = true;
 }
@@ -304,32 +414,81 @@ try{
 }
 
 /* ====== TTS with visemes ====== */
+let curTtsCtrl = null; // abort controller for active TTS fetch
+let selectedLang = 'en';
+function ttsPayload(text){
+  const lang = selectedLang || 'en';
+  const mode = lang !== 'en' ? 'auto' : null; // keep Ruth for English by default
+  return { text, lang, mode };
+}
 async function ttsFull(text){
   // Retry a couple times on 429/5xx to smooth out transient throttling
   let lastErr;
   for(let attempt=0; attempt<3; attempt++){
     try{
+  const ctrl = new AbortController(); curTtsCtrl = ctrl;
+  const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 15000);
       const r = await fetch('/api/tts',{
-        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text})
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ttsPayload(text)), signal: ctrl.signal
       });
+  clearTimeout(timeout);
       if(r.status===429 || r.status===503 || r.status===502){
         const back = 250*Math.pow(2,attempt) + Math.random()*150; await new Promise(res=>setTimeout(res, back));
         continue;
       }
       const d = await r.json(); return d; // {audio_b64, marks}
-    }catch(e){ lastErr = e; const back = 200*Math.pow(2,attempt); await new Promise(res=>setTimeout(res, back)); }
+    }catch(e){
+      if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ throw e; }
+      lastErr = e; const back = 200*Math.pow(2,attempt); await new Promise(res=>setTimeout(res, back));
+    } finally {
+      curTtsCtrl = null;
+    }
   }
   throw lastErr || new Error('tts-retries-exhausted');
 }
 
+async function singOnce(text){
+  let lastErr;
+  for(let attempt=0; attempt<3; attempt++){
+    try{
+      const ctrl = new AbortController(); curTtsCtrl = ctrl;
+      const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 15000);
+      const r = await fetch('/api/sing',{
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ttsPayload(text)), signal: ctrl.signal
+      });
+      clearTimeout(timeout);
+      if(r.status===429 || r.status===503 || r.status===502){
+        const back = 250*Math.pow(2,attempt) + Math.random()*150; await new Promise(res=>setTimeout(res, back));
+        continue;
+      }
+      const d = await r.json(); return d; // {audio_b64, marks}
+    }catch(e){
+      if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ throw e; }
+      lastErr = e; const back = 200*Math.pow(2,attempt); await new Promise(res=>setTimeout(res, back));
+    } finally { curTtsCtrl = null; }
+  }
+  throw lastErr || new Error('sing-retries-exhausted');
+}
+
 /* ====== Lip-sync (visemes + RMS fallback) ====== */
 let speaking=false, currentAudio=null, audioCtx=null, raf=null;
+let curStreamCtrl = null; // abort controller for active chat_stream
+// Mic echo control
+let autoResumeMic = false;          // set true when we pause mic for TTS and should auto-resume afterward
+let suppressASRUntil = 0;           // timestamp (performance.now) to ignore ASR results until after TTS ends
 function stopSpeaking(){
   speaking=false;
   try{ if(currentAudio){ currentAudio.pause(); currentAudio.src=''; } }catch{}
   if(raf) cancelAnimationFrame(raf); currentAudio=null;
   setJawEnergy(0);
   if(audioCtx){ try{ audioCtx.close(); }catch{} audioCtx=null; }
+  try{ if(window.speechSynthesis){ window.speechSynthesis.cancel(); } }catch{}
+  // Flush any queued utterances so a new prompt starts fresh
+  try{ speakQ = Promise.resolve(); }catch{}
+  // Abort any active streaming request so it doesn't enqueue more sentences
+  try{ if(curStreamCtrl){ curStreamCtrl.abort(); curStreamCtrl = null; } }catch{}
+  // Abort any active TTS fetch
+  try{ if(curTtsCtrl){ curTtsCtrl.abort(); curTtsCtrl = null; } }catch{}
 }
 const VMAP = { "sil":0.00, "p":0.15, "t":0.2, "f":0.22, "k":0.22, "S":0.2, "T":0.22, "r":0.28, "w":0.3,
                "e":0.55, "i":0.6, "o":0.75, "u":0.78, "@":0.5, "a":0.95 };
@@ -338,6 +497,11 @@ function visemeToOpen(v){ return (VMAP[v] ?? 0.35); }
 async function playAudioWithVisemes(b64, marks){
   return new Promise(async (resolve, reject)=>{
     stopSpeaking(); speaking=true;
+    // Auto-pause mic during TTS to avoid echo loop; remember to resume afterward
+    if(listening && recog){
+      autoResumeMic = true;
+      try{ stopMic(/*silent*/true); }catch{}
+    }
     const audio = new Audio('data:audio/mp3;base64,'+b64); currentAudio=audio;
 
     let cleaned=false;
@@ -348,6 +512,12 @@ async function playAudioWithVisemes(b64, marks){
       try{ audio.pause(); audio.src=''; }catch{}
       try{ if(audioCtx){ audioCtx.close(); } }catch{}
       audioCtx = null; currentAudio = null; speaking = false;
+      // After TTS ends, ignore ASR results briefly and auto-resume mic if we paused it
+      suppressASRUntil = performance.now() + 700;
+      if(autoResumeMic){
+        autoResumeMic = false;
+        try{ startMic(); }catch{}
+      }
       endOk ? resolve() : reject(new Error('audio-playback-failed'));
     };
 
@@ -362,8 +532,9 @@ async function playAudioWithVisemes(b64, marks){
       audio.onplay = ()=>{ started=true; };
       audio.onerror = ()=> cleanup(false);
       const startWatch = setTimeout(()=>{ if(!started) cleanup(false); }, 2500);
-      audio.onended = ()=>{ clearTimeout(startWatch); cleanup(true); };
-      audio.onpause = ()=>{ /* may pause at end */ };
+  audio.onended = ()=>{ clearTimeout(startWatch); cleanup(true); };
+  // If we interrupt (stopSpeaking pauses audio), treat as a clean end so the queue continues
+  audio.onpause = ()=>{ clearTimeout(startWatch); cleanup(true); };
       audio.play().catch(()=> cleanup(false));
 
       let idx=0, target=0.2, level=0.15;
@@ -394,32 +565,11 @@ async function playAudioWithVisemes(b64, marks){
 }
 
 let speakQ = Promise.resolve();
+let talkGen = 0; // generation id for active talk stream
 function speakWithBrowser(sentence){
   return new Promise((resolve)=>{
-    try{
-      stopSpeaking(); speaking=true;
-      const synth = window.speechSynthesis; if(!synth){ speaking=false; return resolve(); }
-      const u = new SpeechSynthesisUtterance(sentence);
-      // Prefer female English voice if available
-      const voices = synth.getVoices();
-      const pick = voices.find(v=>/en-/i.test(v.lang) && /female|woman|salli|joanna|amy|emma|linda|rem/i.test((v.name+v.voiceURI).toLowerCase()))
-                || voices.find(v=>/en-/i.test(v.lang))
-                || voices[0];
-      if(pick) u.voice = pick;
-      u.rate = 1.0; u.pitch = 1.05; u.volume = 1.0;
-      let rafId; const t0 = performance.now();
-      const pump = ()=>{
-        if(!speaking) return;
-        const t = (performance.now()-t0)/1000;
-        const v = 0.18 + 0.18*Math.abs(Math.sin(t*8.0)) + 0.06*Math.abs(Math.sin(t*13.0));
-        setJawEnergy(v);
-        rafId = requestAnimationFrame(pump);
-      };
-      u.onstart = ()=>{ pump(); };
-      const cleanup = ()=>{ if(rafId) cancelAnimationFrame(rafId); setJawEnergy(0); speaking=false; resolve(); };
-      u.onend = cleanup; u.onerror = cleanup; u.onpause = cleanup; u.onresume = ()=>{};
-      synth.speak(u);
-    }catch{ speaking=false; resolve(); }
+  // Disabled to prevent male browser voice fallback; resolve immediately.
+  return resolve();
   });
 }
 
@@ -431,8 +581,9 @@ function enqueueSpeak(sentence){
       if(!audio_b64){ throw new Error('no-audio'); }
       await playAudioWithVisemes(audio_b64, marks || []);
     }catch(e){
-      console.warn('Server TTS failed, using browser speech', e);
-      await speakWithBrowser(s);
+  if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){ return; }
+  console.warn('Server TTS failed; skipping speech to avoid browser voice', e);
+  // Intentionally skip browser speech so voice never changes from Ruth
     }
   });
 }
@@ -448,20 +599,31 @@ panelEl.addEventListener('mouseleave', ()=> panelEl.classList.remove('open'));
 
 /* ====== Streaming chat (with sentence-level TTS) ====== */
 async function talk(text){
+  const myGen = ++talkGen;
   stopSpeaking();
   const q = (text||'').trim(); if(!q) return;
   add(q,'user');
 
   const bubble = document.createElement('div'); bubble.className='bubble bot'; bubble.textContent=''; logEl.appendChild(bubble);
+  // Show a transient typing indicator while we wait for first tokens
+  let showedTyping = false; let typingTimer = setTimeout(()=>{ if(!showedTyping){ logEl.appendChild(typingEl); typingEl.scrollIntoView({behavior:'smooth', block:'end'}); showedTyping=true; } }, 280);
 
   let buf=''; const dec=new TextDecoder();
   try{
-    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
+    // Create a fresh controller for this stream and store it globally for interruption
+    // Add a client-side timeout to avoid hanging streams
+    const streamCtrl = new AbortController();
+    curStreamCtrl = streamCtrl;
+    const streamTimeout = setTimeout(()=>{ try{ streamCtrl.abort(); }catch{} }, 20000);
+  const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1', style: selectedStyle}), signal: streamCtrl.signal});
     if(!r.ok){ throw new Error('stream-status-'+r.status); }
     const reader = r.body.getReader(); let leftover='';
     while(true){
       const {value, done} = await reader.read();
-      if(done) break;
+      if(done){ break; }
+      if(myGen !== talkGen){ break; }
+      // Remove typing indicator upon first chunk
+      if(showedTyping){ typingEl.remove(); showedTyping=false; clearTimeout(typingTimer); }
       leftover += dec.decode(value, {stream:true});
       const lines = leftover.split('\n'); leftover = lines.pop();
       for(const line of lines){
@@ -480,15 +642,30 @@ async function talk(text){
         if(m && m[1].trim().length>3){ enqueueSpeak(m[1]); buf = buf.slice(m[1].length); }
       }
     }
+  // Ensure typing indicator is cleared if still present
+  try{ if(showedTyping){ typingEl.remove(); showedTyping=false; } }catch{}; clearTimeout(typingTimer);
+  if(myGen !== talkGen){ clearTimeout(streamTimeout); curStreamCtrl = null; return; }
+  clearTimeout(streamTimeout);
   if(buf.trim()) { showSubtitle(buf.trim()); enqueueSpeak(buf.trim()); buf=''; }
     await speakQ;
+    curStreamCtrl = null;
   }catch(e){
+  try{ if(showedTyping){ typingEl.remove(); } }catch{}; clearTimeout(typingTimer);
     console.error(e);
+    if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){
+      // Interrupted: do not fallback or enqueue; just stop cleanly
+      curStreamCtrl = null;
+      return;
+    }
     // Small backoff then fallback to non-streaming
     await new Promise(res=>setTimeout(res, 250));
-    const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
+  // Add a timeout for non-streaming as well
+  const nonCtrl = new AbortController(); const nonTimeout = setTimeout(()=>{ try{ nonCtrl.abort(); }catch{} }, 12000);
+  const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1', style: selectedStyle}), signal: nonCtrl.signal});
     const dd = await rr.json(); bubble.textContent = dd.reply || "I'm here.";
+  clearTimeout(nonTimeout);
     showSubtitle(bubble.textContent); enqueueSpeak(bubble.textContent); await speakQ;
+    curStreamCtrl = null;
   }
 }
 
@@ -498,6 +675,9 @@ inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); se
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog, localCtx;
+let listening = false; // track mic listening state
+let ptt = { enabled: false, key: ' ' }; // push-to-talk (Space)
+const ASR_LANGS = { en: 'en-US', es: 'es-ES', 'es-mx': 'es-MX', fr: 'fr-FR', 'fr-ca': 'fr-CA', hi: 'hi-IN' };
 function beep(freq=880, ms=120){
   try{
     localCtx = localCtx || new (window.AudioContext||window.webkitAudioContext)();
@@ -510,26 +690,133 @@ function beep(freq=880, ms=120){
   }catch{}
 }
 function setListening(on){
+  listening = !!on;
   micdot.classList.toggle('on', on);
   miclabel.textContent = on ? 'Listening…' : 'Idle';
   if(on && speaking) stopSpeaking();
 }
-micBtn.onclick = ()=>{
+function startMic(){
   if(!SpeechRecognition){ alert("Use Chrome/Edge for live speech. I can add Whisper fallback next."); return; }
-  recog = new SpeechRecognition(); recog.lang='en-US'; recog.interimResults=true; recog.continuous=true;
-  let buffer='';
-  recog.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); beep(820,120); };
-  recog.onresult = (ev)=>{
-    for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) buffer += ' '+r[0].transcript; }
-    const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; }
+  if(recog || listening){ return; }
+  const r = new SpeechRecognition();
+  recog = r; r.lang = ASR_LANGS[selectedLang] || 'en-US'; r.interimResults=true; r.continuous=true;
+  let buffer=''; let lastFinalAt=0; const DEBOUNCE_MS=250;
+  r.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); try{ beep(820,120); }catch{} };
+  r.onresult = (ev)=>{
+    // Ignore any recognition results for a brief window after TTS ends
+    if(performance.now() < suppressASRUntil){ return; }
+    let gotFinal = false;
+    for(let i=ev.resultIndex;i<ev.results.length;i++){
+      const rr=ev.results[i]; if(rr.isFinal){ buffer += ' '+rr[0].transcript; gotFinal=true; }
+    }
+    if(gotFinal){
+      const now = performance.now();
+      if(now - lastFinalAt < DEBOUNCE_MS){ return; }
+      lastFinalAt = now;
+      const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; }
+    }
   };
-  recog.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); beep(480,120); };
-  recog.onerror = e=> console.warn(e);
-  recog.start();
+  r.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); try{ beep(480,120); }catch{}; recog = null; };
+  r.onerror = e=> console.warn(e);
+  try{ r.start(); }catch(e){ console.warn('recog.start failed', e); }
+}
+function stopMic(){ try{ if(recog){ recog.stop(); } }catch(e){}
+}
+micBtn.onclick = ()=> startMic();
+stopBtn.onclick = ()=>{
+  // User intent to stop everything: do not auto-resume mic after current TTS
+  autoResumeMic = false;
+  try{ if(recog) recog.stop(); }catch{}
+  stopSpeaking();
 };
-stopBtn.onclick = ()=>{ try{ if(recog) recog.stop(); }catch{} };
+// Language selection and PTT toggle
+langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
+pttToggle.addEventListener('click', ()=>{
+  ptt.enabled = !ptt.enabled;
+  pttToggle.textContent = 'PTT: ' + (ptt.enabled ? 'On' : 'Off');
+});
+// Push-to-talk: hold Space to listen; release to stop
+window.addEventListener('keydown', (e)=>{
+  if(ptt.enabled && e.key === ptt.key && !listening){ startMic(); e.preventDefault(); }
+});
+window.addEventListener('keyup', (e)=>{
+  if(ptt.enabled && e.key === ptt.key && listening){ stopMic(); e.preventDefault(); }
+});
 // Quick test to verify TTS + lip-sync without typing
-testBtn.onclick = ()=>{ enqueueSpeak("Hi, I'm Rem. Nice to meet you."); };
+testBtn.onclick = ()=>{ enqueueSpeak("Hello I am Rem. Nice to Meet you"); };
+// Sing: takes user-provided lyrics only and sings a short snippet
+singBtn.onclick = async ()=>{
+  const lyrics = inp.value.trim(); if(!lyrics){ add('Type a short lyric line first (no copyrighted text fetched).','bot'); return; }
+  stopSpeaking();
+  try{
+    const {audio_b64, marks} = await singOnce(lyrics);
+    await playAudioWithVisemes(audio_b64, marks||[]);
+  }catch(e){ console.warn(e); }
+};
+
+// Suggestions chips
+for (const b of suggestionButtons()){
+  b.addEventListener('click', ()=>{
+    const v = b.getAttribute('data-say')||''; if(v){ talk(v); }
+  });
+}
+// Quick knowledge card button
+document.getElementById('cardBtn')?.addEventListener('click', async ()=>{
+  const topic = (inp.value.trim() || 'a surprising science fact');
+  const prompt = `Create a concise knowledge card about ${topic}. Include: Title, 3 bullet points, a one-line takeaway.`;
+  add(`Card: ${topic}`,'user');
+  try{
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text: prompt, session_id:'local-1', style: selectedStyle})});
+    const d = await r.json();
+    const card = document.createElement('div'); card.className='bubble bot'; card.innerHTML = (d.reply||'').replace(/\n/g,'<br>');
+    logEl.appendChild(card); card.scrollIntoView({behavior:'smooth', block:'end'});
+    showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
+  }catch(e){ console.warn(e); }
+});
+// Mirror card button in the bottom voice bar
+cardBtnBar?.addEventListener('click', async ()=>{
+  const topic = (inp.value.trim() || 'a surprising science fact');
+  const prompt = `Create a concise knowledge card about ${topic}. Include: Title, 3 bullet points, a one-line takeaway.`;
+  add(`Card: ${topic}`,'user');
+  try{
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text: prompt, session_id:'local-1', style: selectedStyle})});
+    const d = await r.json();
+    const card = document.createElement('div'); card.className='bubble bot'; card.innerHTML = (d.reply||'').replace(/\n/g,'<br>');
+    logEl.appendChild(card); card.scrollIntoView({behavior:'smooth', block:'end'});
+    showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
+  }catch(e){ console.warn(e); }
+});
+// Quick spicy toggle in bottom bar
+spicyBar?.addEventListener('click', ()=>{
+  selectedStyle = 'spicy';
+  showSubtitle('Mode: spicy', 1200);
+});
+// Style chips (Grok-like persona modes)
+for (const b of styleButtons()){
+  b.addEventListener('click', ()=>{
+    selectedStyle = b.getAttribute('data-style') || null;
+    // Visual toggle
+    styleButtons().forEach(x=> x.style.outline = '');
+    b.style.outline = '2px solid var(--green)';
+    showSubtitle(`Mode: ${selectedStyle||'default'}`, 1500);
+  });
+}
+
+// Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
+['pointerdown','keydown'].forEach(evt=>{
+  window.addEventListener(evt, ()=>{
+    try{ if(audioCtx && audioCtx.state!=='running'){ audioCtx.resume(); } }catch{}
+    try{ if(window.speechSynthesis && window.speechSynthesis.paused){ window.speechSynthesis.resume?.(); } }catch{}
+    // iOS: create a silent buffer to unlock audio context on first tap
+    try{
+      if(!window.__unlocked && (window.AudioContext||window.webkitAudioContext)){
+        const ctx = new (window.AudioContext||window.webkitAudioContext)();
+        const node = ctx.createBufferSource(); node.buffer = ctx.createBuffer(1,1,22050); node.connect(ctx.destination); node.start(0);
+        window.__unlocked = true;
+      }
+    }catch{}
+  }, {passive:true});
+});
 </script>
 </body>
 </html>
