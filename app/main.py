@@ -258,20 +258,23 @@ def _synthesize_audio(clean: str, voice: str) -> Tuple[bytes, str, str, any]:
     last = None
     for client in _polly_clients():
         for engine, text_type, text in plan:
-            voice = POLLY_VOICE
+            voice_id = voice
             try:
                 r = client.synthesize_speech(
-                    VoiceId=voice, OutputFormat="mp3",
+                    VoiceId=voice_id, OutputFormat="mp3",
                     Text=text, TextType=text_type, Engine=engine
                 )
                 # If we had to use fallback region, log once
                 try:
                     region = getattr(client.meta, "region_name", "")
                     if region and region != POLLY_REGION:
-                        logger.warning("Polly voice %s synthesized from fallback region %s (primary %s)", voice, region, POLLY_REGION)
+                        logger.warning(
+                            "Polly voice %s synthesized from fallback region %s (primary %s)",
+                            voice_id, region, POLLY_REGION
+                        )
                 except Exception:
                     pass
-                return r["AudioStream"].read(), engine, voice, client
+                return r["AudioStream"].read(), engine, voice_id, client
             except ClientError as e:
                 code = e.response.get("Error", {}).get("Code", "")
                 if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
@@ -295,16 +298,24 @@ def _visemes(clean: str, engine: str, voice: str, client=None) -> list:
         return []
 
 VOICE_MAP = {
-    "en": "Ruth",      # English
-    "es": "Lucia",     # Spanish
-    "fr": "Celine",    # French
-    "de": "Vicki",     # German
-    "it": "Bianca",    # Italian
-    "pt": "Camila",    # Portuguese (BR)
-    "ja": "Mizuki",    # Japanese
-    "ko": "Seoyeon",   # Korean
-    "zh": "Zhiyu",     # Chinese (Mandarin)
-    "hi": "Aditi",     # Hindi (bilingual)
+    # English
+    "en": "Ruth",
+    # Spanish
+    "es": "Lucia",      # Spain (Neural female)
+    "es-mx": "Mia",     # Mexico (Neural female)
+    # French
+    "fr": "Lea",        # France (Neural female) — fallback to Celine if unavailable
+    "fr-fr": "Lea",
+    "fr-ca": "Chantal",  # Canada (female)
+    # Hindi
+    "hi": "Aditi",       # Bilingual hi-IN / en-IN female
+    # Other examples kept
+    "de": "Vicki",
+    "it": "Bianca",
+    "pt": "Camila",
+    "ja": "Mizuki",
+    "ko": "Seoyeon",
+    "zh": "Zhiyu",
     "ar": "Zeina",
     "nl": "Lotte",
     "sv": "Astrid",
@@ -317,8 +328,10 @@ VOICE_MAP = {
 
 def _voice_for(text: str, lang_hint: Optional[str], mode: Optional[str]) -> str:
     if (mode or "").lower() == "auto":
-        code = (lang_hint or "en").split("-")[0].lower()
-        return VOICE_MAP.get(code, VOICE_MAP["en"])  # choose a female voice per language
+        hint = (lang_hint or "en").lower()
+        base = hint.split("-")[0]
+        # prefer full code mapping first (e.g., es-mx, fr-ca)
+        return VOICE_MAP.get(hint) or VOICE_MAP.get(base) or VOICE_MAP["en"]
     return POLLY_VOICE
 
 def polly_tts_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
