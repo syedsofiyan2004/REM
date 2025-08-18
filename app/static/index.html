@@ -86,10 +86,14 @@
     <button id="stop" disabled>⏹️ Stop</button>
   <button id="test">▶️ Test Voice</button>
   <button id="sing">🎵 Sing</button>
+  <button id="spicyBar" class="pill" title="Flirty but safe">🌶️ Spicy</button>
+  <button id="cardBtnBar" class="pill" title="Quick knowledge card">🃏 Card</button>
     <select id="langsel" class="pill" title="TTS language">
       <option value="en" selected>English (Ruth)</option>
-      <option value="es">Español</option>
-      <option value="fr">Français</option>
+      <option value="es">Español (España)</option>
+      <option value="es-mx">Español (México)</option>
+      <option value="fr">Français (France)</option>
+      <option value="fr-ca">Français (Canada)</option>
       <option value="hi">हिंदी</option>
     </select>
   <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
@@ -117,6 +121,8 @@ const stopBtn   = document.getElementById('stop');
 const testBtn   = document.getElementById('test');
 const singBtn   = document.getElementById('sing');
 const langSel   = document.getElementById('langsel');
+const spicyBar  = document.getElementById('spicyBar');
+const cardBtnBar= document.getElementById('cardBtnBar');
 const pttToggle = document.getElementById('pttToggle');
 const micdot    = document.getElementById('micdot');
 const miclabel  = document.getElementById('miclabel');
@@ -672,7 +678,7 @@ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecogni
 let recog, localCtx;
 let listening = false; // track mic listening state
 let ptt = { enabled: false, key: ' ' }; // push-to-talk (Space)
-const ASR_LANGS = { en: 'en-US', es: 'es-ES', fr: 'fr-FR', hi: 'hi-IN' };
+const ASR_LANGS = { en: 'en-US', es: 'es-ES', 'es-mx': 'es-MX', fr: 'fr-FR', 'fr-ca': 'fr-CA', hi: 'hi-IN' };
 function beep(freq=880, ms=120){
   try{
     localCtx = localCtx || new (window.AudioContext||window.webkitAudioContext)();
@@ -767,6 +773,24 @@ document.getElementById('cardBtn')?.addEventListener('click', async ()=>{
     logEl.appendChild(card); card.scrollIntoView({behavior:'smooth', block:'end'});
     showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
   }catch(e){ console.warn(e); }
+});
+// Mirror card button in the bottom voice bar
+cardBtnBar?.addEventListener('click', async ()=>{
+  const topic = (inp.value.trim() || 'a surprising science fact');
+  const prompt = `Create a concise knowledge card about ${topic}. Include: Title, 3 bullet points, a one-line takeaway.`;
+  add(`Card: ${topic}`,'user');
+  try{
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text: prompt, session_id:'local-1', style: selectedStyle})});
+    const d = await r.json();
+    const card = document.createElement('div'); card.className='bubble bot'; card.innerHTML = (d.reply||'').replace(/\n/g,'<br>');
+    logEl.appendChild(card); card.scrollIntoView({behavior:'smooth', block:'end'});
+    showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
+  }catch(e){ console.warn(e); }
+});
+// Quick spicy toggle in bottom bar
+spicyBar?.addEventListener('click', ()=>{
+  selectedStyle = 'spicy';
+  showSubtitle('Mode: spicy', 1200);
 });
 // Style chips (Grok-like persona modes)
 for (const b of styleButtons()){
