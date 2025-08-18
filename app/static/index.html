@@ -13,7 +13,7 @@
 }
 </script>
 <style>
-  :root{ --fg:#f4f7ff; --glass:#0b1020cc; --line:#23314a; --green:#00d68f; --bg:#0b0e14; }
+  :root{ --fg:#f4f7ff; --glass:#0b1020cc; --line:#23314a; --green:#00d68f; --bg:#0b0e14; --pill:#13233c; --pillBorder:#2a3d59; }
   *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif}
   html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden}
   #scene3d{position:fixed;inset:0;z-index:0;background:#0c0f18}
@@ -28,16 +28,18 @@
   .user{background:#0f223f}
   .bot{background:#121a2a}
   .row{display:flex;gap:8px}
-  input,button{font:16px/1.35 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
+  input,button,select{font:16px/1.35 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
   input{flex:1;min-width:0} button{cursor:pointer;font-weight:600}
   button:hover{filter:brightness(1.06)} button:disabled{opacity:.55;cursor:not-allowed}
   #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:8px;
-            background:var(--glass);border:1px solid #1e2a3f;padding:8px 10px;border-radius:12px;flex-wrap:wrap}
-  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#0e1627;border:1px solid #26344b;font-size:13px}
+            background:var(--glass);border:1px solid #1e2a3f;padding:8px 10px;border-radius:12px;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:var(--pill);border:1px solid var(--pillBorder);font-size:13px;color:#eaf2ff}
+  .pill:focus-visible{outline:2px solid var(--green)}
+  select.pill{appearance:none;background:var(--pill);color:#eaf2ff}
   .dot{width:10px;height:10px;border-radius:50%;background:#78859a}.dot.on{background:var(--green);box-shadow:0 0 10px var(--green)}
   #badge{position:fixed;top:16px;left:16px;z-index:2;padding:8px 12px;border-radius:12px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700;letter-spacing:.3px}
   #hambtn{position:fixed;top:16px;right:16px;z-index:3;padding:8px 10px;border-radius:10px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700}
-  #subtitle{position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:2;
+  #subtitle{position:fixed;left:50%;bottom:24%;transform:translateX(-50%);z-index:2;
        max-width:min(70vw,900px); text-align:center; padding:10px 14px; border-radius:12px;
        background:#0e1627f0; border:1px solid #23314a; color:#e9f2ff; text-shadow:0 1px 2px #000; opacity:0; transition:opacity .25s ease}
   #subtitle.show{ opacity:1 }
@@ -51,11 +53,16 @@
   body.high-contrast .bubble { border-color:#35507a }
   body.high-contrast .user { background:#0d2a52 }
   body.high-contrast .bot  { background:#0f1930 }
+  /* Onboarding toast */
+  #whatsnew{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 86px);transform:translateX(-50%);z-index:4;display:none;
+    background:#0e1627; color:#eaf2ff; border:1px solid #2a3d59; border-radius:12px; padding:10px 12px; font-size:13px}
+  #whatsnew.show{display:block}
+  #whatsnew button{margin-left:8px}
   /* Mobile tweaks */
   @media (max-width: 768px){
     #panel{width:100vw; padding:14px}
     #badge{top:auto; bottom:calc(env(safe-area-inset-bottom, 0px) + 72px)}
-    #subtitle{bottom:30%}
+    #subtitle{bottom:36%}
     #voicebar{left:8px; right:8px;}
     input,button{font-size:17px} /* bigger tap targets */
   }
@@ -96,6 +103,7 @@
   <button id="sing">🎵 Sing</button>
   <button id="spicyBar" class="pill" title="Flirty but safe">🌶️ Spicy</button>
   <button id="cardBtnBar" class="pill" title="Quick knowledge card">🃏 Card</button>
+  <button id="controlsToggle" class="pill" title="Open controls">☰ Controls</button>
   <button id="textToggle" class="pill" title="Larger text">A+</button>
   <button id="contrastToggle" class="pill" title="High contrast">HC</button>
     <select id="langsel" class="pill" title="TTS language">
@@ -109,6 +117,7 @@
   <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
+  <div id="whatsnew">New: Spicy, Card, Sing, A+, HC, dialect voices. <button id="wn-ok" class="pill">Got it</button></div>
 
 <script type="module">
 const RPM_AVATAR_URL =
@@ -135,6 +144,8 @@ const cardBtnBar= document.getElementById('cardBtnBar');
 const pttToggle = document.getElementById('pttToggle');
 const textToggle = document.getElementById('textToggle');
 const contrastToggle = document.getElementById('contrastToggle');
+const controlsToggle = document.getElementById('controlsToggle');
+const whatsNew = document.getElementById('whatsnew');
 const micdot    = document.getElementById('micdot');
 const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
@@ -159,7 +170,7 @@ function floatReaction(emoji){
   setTimeout(()=>{ el.remove(); }, 1100);
 }
 const rxBar = document.createElement('div'); rxBar.style.position='fixed'; rxBar.style.zIndex='3';
-rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='22%';
+rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='28%';
 rxBar.style.display='flex'; rxBar.style.gap='6px';
 reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
 document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
@@ -169,6 +180,11 @@ try{
   const hc = localStorage.getItem('pref-high-contrast') === '1';
   document.body.classList.toggle('large-text', lt);
   document.body.classList.toggle('high-contrast', hc);
+}catch{}
+// Showcase features once
+try{
+  const seen = localStorage.getItem('ui_whats_new_aug18') === '1';
+  if(!seen){ whatsNew.classList.add('show'); }
 }catch{}
 
 /* ====== log ====== */
@@ -614,7 +630,6 @@ let subTimer; function showSubtitle(text, ttl=4000){
   subTimer = setTimeout(()=>subtitle.classList.remove('show'), ttl);
 }
 hambtn.onclick = ()=>{ panelEl.classList.toggle('open'); };
-panelEl.addEventListener('mouseleave', ()=> panelEl.classList.remove('open'));
 
 /* ====== Streaming chat (with sentence-level TTS) ====== */
 async function talk(text){
@@ -831,6 +846,11 @@ contrastToggle?.addEventListener('click', ()=>{
   const on = !document.body.classList.contains('high-contrast');
   document.body.classList.toggle('high-contrast', on);
   try{ localStorage.setItem('pref-high-contrast', on ? '1' : '0'); }catch{}
+});
+controlsToggle?.addEventListener('click', ()=>{ panelEl.classList.add('open'); });
+document.getElementById('wn-ok')?.addEventListener('click', ()=>{
+  whatsNew.classList.remove('show');
+  try{ localStorage.setItem('ui_whats_new_aug18','1'); }catch{}
 });
 
 // Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
