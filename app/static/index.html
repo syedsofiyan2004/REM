@@ -70,6 +70,13 @@
     <button id="mic">🎙️ Start Voice</button>
     <button id="stop" disabled>⏹️ Stop</button>
   <button id="test">▶️ Test Voice</button>
+    <select id="langsel" class="pill" title="TTS language">
+      <option value="en" selected>English (Ruth)</option>
+      <option value="es">Español</option>
+      <option value="fr">Français</option>
+      <option value="hi">हिंदी</option>
+    </select>
+    <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
 
@@ -92,12 +99,16 @@ const sendBtn   = document.getElementById('send');
 const micBtn    = document.getElementById('mic');
 const stopBtn   = document.getElementById('stop');
 const testBtn   = document.getElementById('test');
+const langSel   = document.getElementById('langsel');
+const pttToggle = document.getElementById('pttToggle');
 const micdot    = document.getElementById('micdot');
 const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
 const hambtn    = document.getElementById('hambtn');
 const subtitle  = document.getElementById('subtitle');
 const suggestionButtons = () => Array.from(document.querySelectorAll('#panel .pill[data-say]'));
+// Typing indicator
+let typingEl; (function(){ typingEl = document.createElement('div'); typingEl.className='bubble bot'; typingEl.textContent='…'; typingEl.style.opacity='0.6'; })();
 
 /* ====== log ====== */
 function add(text, who){
@@ -362,6 +373,12 @@ try{
 
 /* ====== TTS with visemes ====== */
 let curTtsCtrl = null; // abort controller for active TTS fetch
+let selectedLang = 'en';
+function ttsPayload(text){
+  const lang = selectedLang || 'en';
+  const mode = lang !== 'en' ? 'auto' : null; // keep Ruth for English by default
+  return { text, lang, mode };
+}
 async function ttsFull(text){
   // Retry a couple times on 429/5xx to smooth out transient throttling
   let lastErr;
@@ -370,7 +387,7 @@ async function ttsFull(text){
   const ctrl = new AbortController(); curTtsCtrl = ctrl;
   const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 15000);
       const r = await fetch('/api/tts',{
-        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}), signal: ctrl.signal
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ttsPayload(text)), signal: ctrl.signal
       });
   clearTimeout(timeout);
       if(r.status===429 || r.status===503 || r.status===502){
@@ -523,18 +540,25 @@ async function talk(text){
   add(q,'user');
 
   const bubble = document.createElement('div'); bubble.className='bubble bot'; bubble.textContent=''; logEl.appendChild(bubble);
+  // Show a transient typing indicator while we wait for first tokens
+  let showedTyping = false; let typingTimer = setTimeout(()=>{ if(!showedTyping){ logEl.appendChild(typingEl); typingEl.scrollIntoView({behavior:'smooth', block:'end'}); showedTyping=true; } }, 280);
 
   let buf=''; const dec=new TextDecoder();
   try{
     // Create a fresh controller for this stream and store it globally for interruption
-    const ctrl = new AbortController(); curStreamCtrl = ctrl;
-    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: ctrl.signal});
+    // Add a client-side timeout to avoid hanging streams
+    const streamCtrl = new AbortController();
+    curStreamCtrl = streamCtrl;
+    const streamTimeout = setTimeout(()=>{ try{ streamCtrl.abort(); }catch{} }, 20000);
+    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: streamCtrl.signal});
     if(!r.ok){ throw new Error('stream-status-'+r.status); }
     const reader = r.body.getReader(); let leftover='';
     while(true){
       const {value, done} = await reader.read();
       if(done){ break; }
       if(myGen !== talkGen){ break; }
+      // Remove typing indicator upon first chunk
+      if(showedTyping){ typingEl.remove(); showedTyping=false; clearTimeout(typingTimer); }
       leftover += dec.decode(value, {stream:true});
       const lines = leftover.split('\n'); leftover = lines.pop();
       for(const line of lines){
@@ -553,11 +577,15 @@ async function talk(text){
         if(m && m[1].trim().length>3){ enqueueSpeak(m[1]); buf = buf.slice(m[1].length); }
       }
     }
-    if(myGen !== talkGen){ curStreamCtrl = null; return; }
+  // Ensure typing indicator is cleared if still present
+  try{ if(showedTyping){ typingEl.remove(); showedTyping=false; } }catch{}; clearTimeout(typingTimer);
+  if(myGen !== talkGen){ clearTimeout(streamTimeout); curStreamCtrl = null; return; }
+  clearTimeout(streamTimeout);
   if(buf.trim()) { showSubtitle(buf.trim()); enqueueSpeak(buf.trim()); buf=''; }
     await speakQ;
     curStreamCtrl = null;
   }catch(e){
+  try{ if(showedTyping){ typingEl.remove(); } }catch{}; clearTimeout(typingTimer);
     console.error(e);
     if(e && (e.name==='AbortError' || String(e).includes('AbortError'))){
       // Interrupted: do not fallback or enqueue; just stop cleanly
@@ -566,8 +594,11 @@ async function talk(text){
     }
     // Small backoff then fallback to non-streaming
     await new Promise(res=>setTimeout(res, 250));
-    const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'})});
+  // Add a timeout for non-streaming as well
+  const nonCtrl = new AbortController(); const nonTimeout = setTimeout(()=>{ try{ nonCtrl.abort(); }catch{} }, 12000);
+  const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: nonCtrl.signal});
     const dd = await rr.json(); bubble.textContent = dd.reply || "I'm here.";
+  clearTimeout(nonTimeout);
     showSubtitle(bubble.textContent); enqueueSpeak(bubble.textContent); await speakQ;
     curStreamCtrl = null;
   }
@@ -580,6 +611,8 @@ inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); se
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recog, localCtx;
 let listening = false; // track mic listening state
+let ptt = { enabled: false, key: ' ' }; // push-to-talk (Space)
+const ASR_LANGS = { en: 'en-US', es: 'es-ES', fr: 'fr-FR', hi: 'hi-IN' };
 function beep(freq=880, ms=120){
   try{
     localCtx = localCtx || new (window.AudioContext||window.webkitAudioContext)();
@@ -599,17 +632,24 @@ function setListening(on){
 }
 function startMic(){
   if(!SpeechRecognition){ alert("Use Chrome/Edge for live speech. I can add Whisper fallback next."); return; }
+  if(recog || listening){ return; }
   const r = new SpeechRecognition();
-  recog = r; r.lang='en-US'; r.interimResults=true; r.continuous=true;
-  let buffer='';
+  recog = r; r.lang = ASR_LANGS[selectedLang] || 'en-US'; r.interimResults=true; r.continuous=true;
+  let buffer=''; let lastFinalAt=0; const DEBOUNCE_MS=250;
   r.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); try{ beep(820,120); }catch{} };
   r.onresult = (ev)=>{
     // Ignore any recognition results for a brief window after TTS ends
     if(performance.now() < suppressASRUntil){ return; }
+    let gotFinal = false;
     for(let i=ev.resultIndex;i<ev.results.length;i++){
-      const rr=ev.results[i]; if(rr.isFinal) buffer += ' '+rr[0].transcript;
+      const rr=ev.results[i]; if(rr.isFinal){ buffer += ' '+rr[0].transcript; gotFinal=true; }
     }
-    const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; }
+    if(gotFinal){
+      const now = performance.now();
+      if(now - lastFinalAt < DEBOUNCE_MS){ return; }
+      lastFinalAt = now;
+      const cleaned = buffer.trim(); if(cleaned){ talk(cleaned); buffer=''; }
+    }
   };
   r.onend = ()=>{ micBtn.disabled=false; stopBtn.disabled=true; setListening(false); try{ beep(480,120); }catch{}; recog = null; };
   r.onerror = e=> console.warn(e);
@@ -624,6 +664,19 @@ stopBtn.onclick = ()=>{
   try{ if(recog) recog.stop(); }catch{}
   stopSpeaking();
 };
+// Language selection and PTT toggle
+langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
+pttToggle.addEventListener('click', ()=>{
+  ptt.enabled = !ptt.enabled;
+  pttToggle.textContent = 'PTT: ' + (ptt.enabled ? 'On' : 'Off');
+});
+// Push-to-talk: hold Space to listen; release to stop
+window.addEventListener('keydown', (e)=>{
+  if(ptt.enabled && e.key === ptt.key && !listening){ startMic(); e.preventDefault(); }
+});
+window.addEventListener('keyup', (e)=>{
+  if(ptt.enabled && e.key === ptt.key && listening){ stopMic(); e.preventDefault(); }
+});
 // Quick test to verify TTS + lip-sync without typing
 testBtn.onclick = ()=>{ enqueueSpeak("Hello I am Rem. Nice to Meet you"); };
 

@@ -423,8 +423,11 @@ def tts(payload: TTSIn):
     if not txt:
         raise HTTPException(400, "Empty text")
     try:
-        # Cache by normalized text
-        key = re.sub(r"\s+", " ", txt).strip().lower()
+        # Cache by normalized text, including language and mode to avoid cross-voice collisions
+        norm_txt = re.sub(r"\s+", " ", txt).strip().lower()
+        lang_key = (payload.lang or "").strip().lower()
+        mode_key = (payload.mode or "").strip().lower()
+        key = f"{lang_key}|{mode_key}|{norm_txt}"
         cached = _tts_cache_get(key)
         if cached:
             audio_b64, marks = cached
