@@ -31,8 +31,8 @@
   input,button,select{font:16px/1.35 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
   input{flex:1;min-width:0} button{cursor:pointer;font-weight:600}
   button:hover{filter:brightness(1.06)} button:disabled{opacity:.55;cursor:not-allowed}
-  #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:8px;
-            background:var(--glass);border:1px solid #1e2a3f;padding:8px 10px;border-radius:12px;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}
+  #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:10px;
+            background:var(--glass);border:1px solid #1e2a3f;padding:10px 12px;border-radius:14px;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}
   .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:var(--pill);border:1px solid var(--pillBorder);font-size:13px;color:#eaf2ff}
   .pill:focus-visible{outline:2px solid var(--green)}
   select.pill{appearance:none;background:var(--pill);color:#eaf2ff}
@@ -53,11 +53,7 @@
   body.high-contrast .bubble { border-color:#35507a }
   body.high-contrast .user { background:#0d2a52 }
   body.high-contrast .bot  { background:#0f1930 }
-  /* Onboarding toast */
-  #whatsnew{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 86px);transform:translateX(-50%);z-index:4;display:none;
-    background:#0e1627; color:#eaf2ff; border:1px solid #2a3d59; border-radius:12px; padding:10px 12px; font-size:13px}
-  #whatsnew.show{display:block}
-  #whatsnew button{margin-left:8px}
+  /* Onboarding toast removed for a cleaner UI */
   /* Mobile tweaks */
   @media (max-width: 768px){
     #panel{width:100vw; padding:14px}
@@ -99,13 +95,7 @@
   <div id="voicebar">
     <button id="mic">🎙️ Start Voice</button>
     <button id="stop" disabled>⏹️ Stop</button>
-  <button id="test">▶️ Test Voice</button>
   <button id="sing">🎵 Sing</button>
-  <button id="spicyBar" class="pill" title="Flirty but safe">🌶️ Spicy</button>
-  <button id="cardBtnBar" class="pill" title="Quick knowledge card">🃏 Card</button>
-  <button id="controlsToggle" class="pill" title="Open controls">☰ Controls</button>
-  <button id="textToggle" class="pill" title="Larger text">A+</button>
-  <button id="contrastToggle" class="pill" title="High contrast">HC</button>
     <select id="langsel" class="pill" title="TTS language">
       <option value="en" selected>English (Ruth)</option>
       <option value="es">Español (España)</option>
@@ -114,10 +104,9 @@
       <option value="fr-ca">Français (Canada)</option>
       <option value="hi">हिंदी (India)</option>
     </select>
-  <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
-  <div id="whatsnew">New: Spicy, Card, Sing, A+, HC, dialect voices. <button id="wn-ok" class="pill">Got it</button></div>
+
 
 <script type="module">
 const RPM_AVATAR_URL =
@@ -136,16 +125,8 @@ const inp       = document.getElementById('inp');
 const sendBtn   = document.getElementById('send');
 const micBtn    = document.getElementById('mic');
 const stopBtn   = document.getElementById('stop');
-const testBtn   = document.getElementById('test');
 const singBtn   = document.getElementById('sing');
 const langSel   = document.getElementById('langsel');
-const spicyBar  = document.getElementById('spicyBar');
-const cardBtnBar= document.getElementById('cardBtnBar');
-const pttToggle = document.getElementById('pttToggle');
-const textToggle = document.getElementById('textToggle');
-const contrastToggle = document.getElementById('contrastToggle');
-const controlsToggle = document.getElementById('controlsToggle');
-const whatsNew = document.getElementById('whatsnew');
 const micdot    = document.getElementById('micdot');
 const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
@@ -174,17 +155,12 @@ rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bo
 rxBar.style.display='flex'; rxBar.style.gap='6px';
 reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
 document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
-// Restore accessibility prefs
+// Restore accessibility prefs (kept via body classes; toggles removed from bar)
 try{
   const lt = localStorage.getItem('pref-large-text') === '1';
   const hc = localStorage.getItem('pref-high-contrast') === '1';
   document.body.classList.toggle('large-text', lt);
   document.body.classList.toggle('high-contrast', hc);
-}catch{}
-// Showcase features once
-try{
-  const seen = localStorage.getItem('ui_whats_new_aug18') === '1';
-  if(!seen){ whatsNew.classList.add('show'); }
 }catch{}
 
 /* ====== log ====== */
@@ -248,7 +224,9 @@ async function init3D(url){
   scene.add(hemi, dir);
 
   controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableZoom = false; controls.enablePan = false;
+  // Allow user zoom in/out with mouse wheel or pinch
+  controls.enableZoom = true; controls.zoomSpeed = 0.6; controls.enablePan = false;
+  controls.minDistance = 0.8; controls.maxDistance = 6;
 
   clock = new THREE.Clock();
   const loader = new GLTFLoader();
@@ -763,21 +741,9 @@ stopBtn.onclick = ()=>{
   try{ if(recog) recog.stop(); }catch{}
   stopSpeaking();
 };
-// Language selection and PTT toggle
+// Language selection
 langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
-pttToggle.addEventListener('click', ()=>{
-  ptt.enabled = !ptt.enabled;
-  pttToggle.textContent = 'PTT: ' + (ptt.enabled ? 'On' : 'Off');
-});
-// Push-to-talk: hold Space to listen; release to stop
-window.addEventListener('keydown', (e)=>{
-  if(ptt.enabled && e.key === ptt.key && !listening){ startMic(); e.preventDefault(); }
-});
-window.addEventListener('keyup', (e)=>{
-  if(ptt.enabled && e.key === ptt.key && listening){ stopMic(); e.preventDefault(); }
-});
-// Quick test to verify TTS + lip-sync without typing
-testBtn.onclick = ()=>{ enqueueSpeak("Hello I am Rem. Nice to Meet you"); };
+// Removed PTT/test controls to simplify UI
 // Sing: takes user-provided lyrics only and sings a short snippet
 singBtn.onclick = async ()=>{
   const lyrics = inp.value.trim(); if(!lyrics){ add('Type a short lyric line first (no copyrighted text fetched).','bot'); return; }
@@ -807,24 +773,7 @@ document.getElementById('cardBtn')?.addEventListener('click', async ()=>{
     showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
   }catch(e){ console.warn(e); }
 });
-// Mirror card button in the bottom voice bar
-cardBtnBar?.addEventListener('click', async ()=>{
-  const topic = (inp.value.trim() || 'a surprising science fact');
-  const prompt = `Create a concise knowledge card about ${topic}. Include: Title, 3 bullet points, a one-line takeaway.`;
-  add(`Card: ${topic}`,'user');
-  try{
-    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text: prompt, session_id:'local-1', style: selectedStyle})});
-    const d = await r.json();
-    const card = document.createElement('div'); card.className='bubble bot'; card.innerHTML = (d.reply||'').replace(/\n/g,'<br>');
-    logEl.appendChild(card); card.scrollIntoView({behavior:'smooth', block:'end'});
-    showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
-  }catch(e){ console.warn(e); }
-});
-// Quick spicy toggle in bottom bar
-spicyBar?.addEventListener('click', ()=>{
-  selectedStyle = 'spicy';
-  showSubtitle('Mode: spicy', 1200);
-});
+// Removed bottom bar card and spicy duplicates
 // Style chips (Grok-like persona modes)
 for (const b of styleButtons()){
   b.addEventListener('click', ()=>{
@@ -836,22 +785,7 @@ for (const b of styleButtons()){
   });
 }
 
-// Accessibility toggles
-textToggle?.addEventListener('click', ()=>{
-  const on = !document.body.classList.contains('large-text');
-  document.body.classList.toggle('large-text', on);
-  try{ localStorage.setItem('pref-large-text', on ? '1' : '0'); }catch{}
-});
-contrastToggle?.addEventListener('click', ()=>{
-  const on = !document.body.classList.contains('high-contrast');
-  document.body.classList.toggle('high-contrast', on);
-  try{ localStorage.setItem('pref-high-contrast', on ? '1' : '0'); }catch{}
-});
-controlsToggle?.addEventListener('click', ()=>{ panelEl.classList.add('open'); });
-document.getElementById('wn-ok')?.addEventListener('click', ()=>{
-  whatsNew.classList.remove('show');
-  try{ localStorage.setItem('ui_whats_new_aug18','1'); }catch{}
-});
+// Removed extra bar toggles and what's-new toast wiring
 
 // Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
 ['pointerdown','keydown'].forEach(evt=>{

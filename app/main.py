@@ -273,23 +273,35 @@ def make_ssml(text: str, lang: Optional[str] = None) -> str:
         return f"<speak><lang xml:lang='{lang_norm}'><prosody rate='{rate}' pitch='{pitch}'>{inner}</prosody></lang></speak>"
     return f"<speak><prosody rate='{rate}' pitch='{pitch}'>{inner}</prosody></speak>"
 
+
+
 def make_sing_ssml(text: str, lang: Optional[str] = None) -> str:
-    """A playful singing SSML: slower rate, gentle vibrato-like pitch changes, clear phrasing.
-    Note: Polly doesn't support true singing; this simulates a tuneful delivery.
+    """A more melodic singing SSML: phrase contours + gentle rests to feel musical.
+    Polly can't truly sing; this simulates melody with pitch steps and pacing.
     """
     import re as _re
-    words = [w for w in _re.split(r"(\s+)", text.strip()) if w]
-    pitches = [+8, +4, +2, +6, +3, +1, +5, +2]
-    parts = []
-    i = 0
-    for w in words:
-        if w.isspace():
-            parts.append(w)
-        else:
-            p = pitches[i % len(pitches)]
-            parts.append(f"<prosody pitch='{p}%'>" + html.escape(w) + "</prosody>")
-            i += 1
-    inner = "".join(parts)
+    # Split into phrases (keep simple, musical rests between them)
+    phrases = [p.strip() for p in _re.split(r"[.!?;,]\s*", (text or "").strip()) if p]
+    contours = [
+        [+2, +4, +6, +8, +10,  +8,  +6,  +4],
+        [+3, +6, +9, +6,  +3,   0,  +2,  +4],
+        [+1, +3, +5, +7,  +9, +11,  +9,  +7],
+    ]
+    parts: List[str] = []
+    for idx, ph in enumerate(phrases):
+        tokens = [t for t in _re.split(r"(\s+)", ph) if t]
+        contour = contours[idx % len(contours)]
+        k = 0
+        for tok in tokens:
+            if tok.isspace():
+                parts.append(tok)
+            else:
+                pitch = contour[k % len(contour)]
+                parts.append(f"<prosody pitch='{pitch}%'>" + html.escape(tok) + "</prosody>")
+                k += 1
+        # small rest at end of phrase
+        parts.append("<break time='220ms'/>")
+    inner = "".join(parts) or html.escape(text)
 
     # Language-aware base rate for singing
     lang_norm = _normalize_lang(lang) or ""
