@@ -215,10 +215,25 @@ def _stream_bedrock_text(model_id: str, system_prompt: str, messages: list):
     raise last_err or RuntimeError("Bedrock stream retries exhausted")
 
 # ---- Polly TTS (SSML pacing + visemes) --------------------------------------
-def make_ssml(text: str) -> str:
+def _normalize_lang(lang: Optional[str]) -> Optional[str]:
+    if not lang: return None
+    l = lang.strip().lower()
+    # Normalize to IETF-like codes Polly expects
+    m = {
+        "es": "es-ES", "es-es": "es-ES", "es-mx": "es-MX",
+        "fr": "fr-FR", "fr-fr": "fr-FR", "fr-ca": "fr-CA",
+        "hi": "hi-IN", "hi-in": "hi-IN",
+        "en": "en-US",
+    }
+    return m.get(l, None)
+
+def make_ssml(text: str, lang: Optional[str] = None) -> str:
     import re as _re
     sents = [html.escape(s.strip()) for s in _re.split(r'(?<=[.!?])\s+', text) if s.strip()]
     inner = "<break time='80ms'/>".join(f"<s>{s}</s><break time='120ms'/>" for s in sents)
+    lang_norm = _normalize_lang(lang)
+    if lang_norm:
+        return f"<speak><lang xml:lang='{lang_norm}'><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></lang></speak>"
     return f"<speak><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></speak>"
 
 _VOICES_CACHE = {}
@@ -243,15 +258,15 @@ def _choose_voice(preferred: str, engine: str) -> str:
     """
     return preferred
 
-def _synthesize_audio(clean: str, voice: str) -> Tuple[bytes, str, str, any]:
+def _synthesize_audio(clean: str, voice: str, lang: Optional[str] = None) -> Tuple[bytes, str, str, any]:
     """Return (audio_bytes, engine_used, voice_used, polly_client_used).
 
     Always uses the preferred voice (POLLY_VOICE). Tries neural/standard and
     will switch to a fallback region if necessary, but never changes the voice.
     """
     plan = [
-        ("neural",   "ssml", make_ssml(clean)),
-        ("standard", "ssml", make_ssml(clean)),
+        ("neural",   "ssml", make_ssml(clean, lang)),
+        ("standard", "ssml", make_ssml(clean, lang)),
         ("neural",   "text", clean),
         ("standard", "text", clean),
     ]
@@ -326,18 +341,42 @@ VOICE_MAP = {
     "tr": "Filiz",
 }
 
-def _voice_for(text: str, lang_hint: Optional[str], mode: Optional[str]) -> str:
-    if (mode or "").lower() == "auto":
-        hint = (lang_hint or "en").lower()
-        base = hint.split("-")[0]
-        # prefer full code mapping first (e.g., es-mx, fr-ca)
-        return VOICE_MAP.get(hint) or VOICE_MAP.get(base) or VOICE_MAP["en"]
-    return POLLY_VOICE
+def _voice_candidates(lang_hint: Optional[str], mode: Optional[str]) -> List[str]:
+    if (mode or "").lower() != "auto":
+        return [POLLY_VOICE]
+    hint = (lang_hint or "en").lower()
+    base = hint.split("-")[0]
+    # Preference lists per dialect
+    prefs = {
+        "es-mx": ["Mia", "Lucia"],
+        "es-es": ["Lucia", "Mia"],
+        "es":    ["Lucia", "Mia"],
+        "fr-ca": ["Chantal", "Lea", "Celine"],
+        "fr-fr": ["Lea", "Celine", "Chantal"],
+        "fr":    ["Lea", "Celine"],
+        "hi-in": ["Aditi"],
+        "hi":    ["Aditi"],
+        "en":    [POLLY_VOICE],
+    }
+    return prefs.get(hint) or prefs.get(f"{base}-{'mx' if base=='es' else 'fr' if base=='fr' else 'in' if base=='hi' else ''}") or prefs.get(base) or [VOICE_MAP.get(hint) or VOICE_MAP.get(base) or VOICE_MAP["en"]]
 
 def polly_tts_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
     clean = strip_stage(text) or text
-    voice = _voice_for(clean, lang, mode)
-    audio, engine, used_voice, client = _synthesize_audio(clean, voice)
+    candidates = _voice_candidates(lang, mode)
+    last_exc = None
+    for v in candidates:
+        try:
+            audio, engine, used_voice, client = _synthesize_audio(clean, v, lang)
+            marks = _visemes(clean, engine, used_voice, client)
+            return base64.b64encode(audio).decode("ascii"), marks
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in {"InvalidVoiceIdException","LanguageNotSupportedException","ValidationException","EngineNotSupportedException"}:
+                last_exc = e; continue
+            raise
+    if last_exc: raise last_exc
+    # Fallback to default
+    audio, engine, used_voice, client = _synthesize_audio(clean, POLLY_VOICE, lang)
     marks = _visemes(clean, engine, used_voice, client)
     return base64.b64encode(audio).decode("ascii"), marks
 
