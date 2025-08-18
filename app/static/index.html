@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <title>Rem — Companion</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0b0e14" />
 <script type="importmap">
 {
   "imports": {
@@ -16,7 +17,7 @@
   *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif}
   html,body{height:100%;margin:0;background:#0b0e14;color:var(--fg);overflow:hidden}
   #scene3d{position:fixed;inset:0;z-index:0;background:#0c0f18}
-  #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,90vw);
+  #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,96vw);
          display:flex;flex-direction:column;gap:12px;padding:18px;
          background:linear-gradient(180deg,#0b1020a0,#0b1020a0);backdrop-filter:blur(8px);
     border-left:1px solid #1e2a3f;z-index:2;
@@ -29,8 +30,8 @@
   input,button{font:15px/1.2 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
   input{flex:1;min-width:0} button{cursor:pointer;font-weight:600}
   button:hover{filter:brightness(1.06)} button:disabled{opacity:.55;cursor:not-allowed}
-  #voicebar{position:fixed;left:16px;bottom:16px;z-index:2;display:flex;align-items:center;gap:10px;
-            background:var(--glass);border:1px solid #1e2a3f;padding:8px 12px;border-radius:12px}
+  #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:8px;
+            background:var(--glass);border:1px solid #1e2a3f;padding:8px 10px;border-radius:12px;flex-wrap:wrap}
   .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#0e1627;border:1px solid #26344b;font-size:13px}
   .dot{width:10px;height:10px;border-radius:50%;background:#78859a}.dot.on{background:var(--green);box-shadow:0 0 10px var(--green)}
   #badge{position:fixed;top:16px;left:16px;z-index:2;padding:8px 12px;border-radius:12px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700;letter-spacing:.3px}
@@ -42,6 +43,14 @@
   #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
     padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#b9c6db;
     font-size:12.5px}
+  /* Mobile tweaks */
+  @media (max-width: 768px){
+    #panel{width:100vw; padding:14px}
+    #badge{top:auto; bottom:calc(env(safe-area-inset-bottom, 0px) + 72px)}
+    #subtitle{bottom:30%}
+    #voicebar{left:8px; right:8px;}
+    input,button{font-size:16px} /* bigger tap targets */
+  }
 </style>
 </head>
 <body>
@@ -59,10 +68,16 @@
       <button id="send">Send</button>
     </div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
-      <button class="pill" data-say="Tell me a short story about kindness.">💡 Story</button>
-      <button class="pill" data-say="Guide me through a 30-second breathing exercise.">🧘 Breathe</button>
-      <button class="pill" data-say="Teach me a fun fact about space.">🛰️ Space</button>
-      <button class="pill" data-say="Help me plan a quick healthy snack.">🥗 Snack</button>
+  <button class="pill" data-say="Tell me a short story about kindness.">💡 Story</button>
+  <button class="pill" data-say="Guide me through a 30-second breathing exercise.">🧘 Breathe</button>
+  <button class="pill" data-say="Teach me a fun fact about space.">🛰️ Space</button>
+  <button class="pill" data-say="Help me plan a quick healthy snack.">🥗 Snack</button>
+  <!-- Style quick toggles (Grok-like modes) -->
+  <button class="pill style" data-style="witty" title="Witty mode">✨ Witty</button>
+  <button class="pill style" data-style="empathetic" title="Empathetic mode">💞 Empathetic</button>
+  <button class="pill style" data-style="precise" title="Precise mode">🧠 Precise</button>
+  <button class="pill style" data-style="spicy" title="Flirty but safe">🌶️ Spicy</button>
+  <button class="pill" id="cardBtn" title="Quick knowledge card">🃏 Card</button>
     </div>
   </aside>
 
@@ -76,7 +91,7 @@
       <option value="fr">Français</option>
       <option value="hi">हिंदी</option>
     </select>
-    <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
+  <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
 
@@ -107,8 +122,28 @@ const panelEl   = document.getElementById('panel');
 const hambtn    = document.getElementById('hambtn');
 const subtitle  = document.getElementById('subtitle');
 const suggestionButtons = () => Array.from(document.querySelectorAll('#panel .pill[data-say]'));
+const styleButtons = () => Array.from(document.querySelectorAll('#panel .pill.style'));
 // Typing indicator
 let typingEl; (function(){ typingEl = document.createElement('div'); typingEl.className='bubble bot'; typingEl.textContent='…'; typingEl.style.opacity='0.6'; })();
+let selectedStyle = null;
+// Reaction chips UI (floating emoji near subtitle)
+const reactions = ['👏','😂','😮','😅','😍','👍','🙏'];
+function floatReaction(emoji){
+  const el = document.createElement('div');
+  el.textContent = emoji; el.style.position='fixed'; el.style.zIndex='3';
+  const rect = subtitle.getBoundingClientRect();
+  el.style.left = (rect.left + rect.width/2 + (Math.random()*60-30))+'px';
+  el.style.top = (rect.top - 10 + (Math.random()*20-10))+'px';
+  el.style.fontSize='28px'; el.style.transition='transform 1s ease, opacity 1s ease';
+  document.body.appendChild(el);
+  requestAnimationFrame(()=>{ el.style.transform='translateY(-50px)'; el.style.opacity='0'; });
+  setTimeout(()=>{ el.remove(); }, 1100);
+}
+const rxBar = document.createElement('div'); rxBar.style.position='fixed'; rxBar.style.zIndex='3';
+rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='22%';
+rxBar.style.display='flex'; rxBar.style.gap='6px';
+reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
+document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
 
 /* ====== log ====== */
 function add(text, who){
@@ -550,7 +585,7 @@ async function talk(text){
     const streamCtrl = new AbortController();
     curStreamCtrl = streamCtrl;
     const streamTimeout = setTimeout(()=>{ try{ streamCtrl.abort(); }catch{} }, 20000);
-    const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: streamCtrl.signal});
+  const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1', style: selectedStyle}), signal: streamCtrl.signal});
     if(!r.ok){ throw new Error('stream-status-'+r.status); }
     const reader = r.body.getReader(); let leftover='';
     while(true){
@@ -596,7 +631,7 @@ async function talk(text){
     await new Promise(res=>setTimeout(res, 250));
   // Add a timeout for non-streaming as well
   const nonCtrl = new AbortController(); const nonTimeout = setTimeout(()=>{ try{ nonCtrl.abort(); }catch{} }, 12000);
-  const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1'}), signal: nonCtrl.signal});
+  const rr = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1', style: selectedStyle}), signal: nonCtrl.signal});
     const dd = await rr.json(); bubble.textContent = dd.reply || "I'm here.";
   clearTimeout(nonTimeout);
     showSubtitle(bubble.textContent); enqueueSpeak(bubble.textContent); await speakQ;
@@ -686,12 +721,43 @@ for (const b of suggestionButtons()){
     const v = b.getAttribute('data-say')||''; if(v){ talk(v); }
   });
 }
+// Quick knowledge card button
+document.getElementById('cardBtn')?.addEventListener('click', async ()=>{
+  const topic = (inp.value.trim() || 'a surprising science fact');
+  const prompt = `Create a concise knowledge card about ${topic}. Include: Title, 3 bullet points, a one-line takeaway.`;
+  add(`Card: ${topic}`,'user');
+  try{
+    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text: prompt, session_id:'local-1', style: selectedStyle})});
+    const d = await r.json();
+    const card = document.createElement('div'); card.className='bubble bot'; card.innerHTML = (d.reply||'').replace(/\n/g,'<br>');
+    logEl.appendChild(card); card.scrollIntoView({behavior:'smooth', block:'end'});
+    showSubtitle('Here’s a quick card'); enqueueSpeak(d.reply||'Here is a quick card.');
+  }catch(e){ console.warn(e); }
+});
+// Style chips (Grok-like persona modes)
+for (const b of styleButtons()){
+  b.addEventListener('click', ()=>{
+    selectedStyle = b.getAttribute('data-style') || null;
+    // Visual toggle
+    styleButtons().forEach(x=> x.style.outline = '');
+    b.style.outline = '2px solid var(--green)';
+    showSubtitle(`Mode: ${selectedStyle||'default'}`, 1500);
+  });
+}
 
 // Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
 ['pointerdown','keydown'].forEach(evt=>{
   window.addEventListener(evt, ()=>{
     try{ if(audioCtx && audioCtx.state!=='running'){ audioCtx.resume(); } }catch{}
     try{ if(window.speechSynthesis && window.speechSynthesis.paused){ window.speechSynthesis.resume?.(); } }catch{}
+    // iOS: create a silent buffer to unlock audio context on first tap
+    try{
+      if(!window.__unlocked && (window.AudioContext||window.webkitAudioContext)){
+        const ctx = new (window.AudioContext||window.webkitAudioContext)();
+        const node = ctx.createBufferSource(); node.buffer = ctx.createBuffer(1,1,22050); node.connect(ctx.destination); node.start(0);
+        window.__unlocked = true;
+      }
+    }catch{}
   }, {passive:true});
 });
 </script>

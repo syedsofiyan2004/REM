@@ -91,6 +91,7 @@ def get_msgs(session_id: str) -> List[Dict]:
 class ChatIn(BaseModel):
     text: str
     session_id: str = "local"
+    style: Optional[str] = None  # conversational style (e.g., 'witty','precise','empathetic')
 
 class TTSIn(BaseModel):
     text: str
@@ -100,6 +101,7 @@ class TTSIn(BaseModel):
 class ChatStreamIn(BaseModel):
     text: str
     session_id: str = "local"
+    style: Optional[str] = None
 
 # ---- helpers ----------------------------------------------------------------
 ACTION_PATTERNS = [
@@ -131,15 +133,30 @@ BEDROCK_MAX_RETRIES = int(os.getenv("BEDROCK_MAX_RETRIES", "3"))
 CHAT_MAX_CONCURRENCY = int(os.getenv("CHAT_MAX_CONCURRENCY", "4"))
 _chat_gate = threading.Semaphore(CHAT_MAX_CONCURRENCY)
 
-def bedrock_reply(system_prompt: str, session_id: str, user_text: str) -> str:
+STYLE_GUIDES = {
+    "witty": "Style: Be witty, playful, and concise with light, tasteful humor. No insults or rudeness.",
+    "precise": "Style: Be brief, direct, and factual. Use short sentences.",
+    "empathetic": "Style: Be warm, supportive, and encouraging. Focus on understanding feelings.",
+    "spicy": (
+        "Style: Be flirty and cheeky in a PG-13 way. Keep it respectful and consensual, avoid sexual or explicit content,"
+        " never involve minors, and immediately decline sexual requests. Use playful compliments and light banter only."
+    ),
+}
+
+def _compose_system(base: str, style: Optional[str]) -> str:
+    s = (style or "").strip().lower()
+    guide = STYLE_GUIDES.get(s)
+    return f"{base}\n\n{guide}" if guide else base
+
+def bedrock_reply(system_prompt: str, session_id: str, user_text: str, style: Optional[str] = None) -> str:
     messages = get_msgs(session_id)
     messages.append({"role":"user","content":[{"type":"text","text":user_text}]})
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-    "max_tokens": 360,
+        "max_tokens": 360,
         "temperature": 0.7,     # a touch more variety
         "top_p": 0.9,
-        "system": system_prompt,
+        "system": _compose_system(system_prompt, style),
         "messages": messages,
     }
     last_err = None
@@ -331,7 +348,7 @@ def chat(payload: ChatIn):
             elif q in {"what's your name","whats your name","your name?","who are you"}:
                 reply = "Rem."
             else:
-                reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
+                reply = bedrock_reply(_compose_system(PERSONA_BLESSED_BOY, payload.style), sid, txt, payload.style)
 
             add_turn(sid, "user", txt)
             add_turn(sid, "assistant", reply)
@@ -353,6 +370,7 @@ def chat_stream(payload: ChatStreamIn):
         raise HTTPException(400, "Empty text")
 
     messages = get_msgs(sid) + [{"role":"user","content":[{"type":"text","text": txt}]}]
+    system_prompt = _compose_system(PERSONA_BLESSED_BOY, payload.style)
 
     def gen():
         try:
@@ -362,7 +380,7 @@ def chat_stream(payload: ChatStreamIn):
                 yield (json.dumps({"error": "Chat busy, try again shortly"}) + "\n").encode("utf-8")
                 return
             try:
-                for token in _stream_bedrock_text(BEDROCK_MODEL, PERSONA_BLESSED_BOY, messages):
+                for token in _stream_bedrock_text(BEDROCK_MODEL, system_prompt, messages):
                     token = token.replace("\n", " ")
                     buff.append(token)
                     yield (json.dumps({"delta": token}) + "\n").encode("utf-8")
@@ -378,7 +396,7 @@ def chat_stream(payload: ChatStreamIn):
             if code in {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}:
                 # Fallback: get a full reply non-streaming and send once
                 try:
-                    reply = bedrock_reply(PERSONA_BLESSED_BOY, sid, txt)
+                    reply = bedrock_reply(_compose_system(PERSONA_BLESSED_BOY, payload.style), sid, txt, payload.style)
                     yield (json.dumps({"delta": reply}) + "\n").encode("utf-8")
                 except Exception:
                     yield (json.dumps({"error": f"Bedrock error: {code}"}) + "\n").encode("utf-8")
