@@ -103,6 +103,11 @@ class ChatStreamIn(BaseModel):
     session_id: str = "local"
     style: Optional[str] = None
 
+class SingIn(BaseModel):
+    text: str  # user-provided lyrics only
+    lang: Optional[str] = None
+    mode: Optional[str] = None  # 'auto' to select a native female voice for that language
+
 # ---- helpers ----------------------------------------------------------------
 ACTION_PATTERNS = [
     r"\*[^*]{0,120}\*", r"\[[^\]]{0,120}\]",
@@ -236,6 +241,30 @@ def make_ssml(text: str, lang: Optional[str] = None) -> str:
         return f"<speak><lang xml:lang='{lang_norm}'><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></lang></speak>"
     return f"<speak><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></speak>"
 
+def make_sing_ssml(text: str, lang: Optional[str] = None) -> str:
+    """A playful singing SSML: slower rate, gentle vibrato-like pitch changes, clear phrasing.
+    Note: Polly doesn't support true singing; this simulates a tuneful delivery.
+    """
+    import re as _re
+    words = [w for w in _re.split(r"(\s+)", text.strip()) if w]
+    pitches = [+8, +4, +2, +6, +3, +1, +5, +2]
+    parts = []
+    i = 0
+    for w in words:
+        if w.isspace():
+            parts.append(w)
+        else:
+            p = pitches[i % len(pitches)]
+            parts.append(f"<prosody pitch='{p}%'>" + html.escape(w) + "</prosody>")
+            i += 1
+    inner = "".join(parts)
+    # Slower rate and phrasing
+    body = f"<prosody rate='slow'>{inner}</prosody>"
+    lang_norm = _normalize_lang(lang)
+    if lang_norm:
+        return f"<speak><lang xml:lang='{lang_norm}'>{body}</lang></speak>"
+    return f"<speak>{body}</speak>"
+
 _VOICES_CACHE = {}
 def _get_voices(client=None):
     """Cache voices per region client."""
@@ -300,6 +329,40 @@ def _synthesize_audio(clean: str, voice: str, lang: Optional[str] = None) -> Tup
         # try next client (fallback region)
     if last: raise last
     raise RuntimeError("Polly synthesis failed")
+
+def _synthesize_ssml(ssml: str, voice: str) -> Tuple[bytes, str, str, any]:
+    plan = [
+        ("neural",   "ssml"),
+        ("standard", "ssml"),
+    ]
+    last = None
+    for client in _polly_clients():
+        for engine, text_type in plan:
+            voice_id = voice
+            try:
+                r = client.synthesize_speech(
+                    VoiceId=voice_id, OutputFormat="mp3",
+                    Text=ssml, TextType=text_type, Engine=engine
+                )
+                try:
+                    region = getattr(client.meta, "region_name", "")
+                    if region and region != POLLY_REGION:
+                        logger.warning(
+                            "Polly voice %s synthesized from fallback region %s (primary %s)",
+                            voice_id, region, POLLY_REGION
+                        )
+                except Exception:
+                    pass
+                return r["AudioStream"].read(), engine, voice_id, client
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in {"InvalidSsmlException","EngineNotSupportedException","TextLengthExceededException",
+                            "InvalidVoiceIdException","UnsupportedPlsAlphabetException","LanguageNotSupportedException",
+                            "ValidationException"}:
+                    last = e; continue
+                raise
+    if last: raise last
+    raise RuntimeError("Polly SSML synthesis failed")
 
 def _visemes(clean: str, engine: str, voice: str, client=None) -> list:
     c = client or polly
@@ -377,6 +440,27 @@ def polly_tts_with_visemes(text: str, lang: Optional[str] = None, mode: Optional
     if last_exc: raise last_exc
     # Fallback to default
     audio, engine, used_voice, client = _synthesize_audio(clean, POLLY_VOICE, lang)
+    marks = _visemes(clean, engine, used_voice, client)
+    return base64.b64encode(audio).decode("ascii"), marks
+
+def polly_sing_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
+    clean = strip_stage(text) or text
+    ssml = make_sing_ssml(clean, lang)
+    candidates = _voice_candidates(lang, mode)
+    last_exc = None
+    for v in candidates:
+        try:
+            audio, engine, used_voice, client = _synthesize_ssml(ssml, v)
+            # For visemes, use the clean text (not SSML) with the same engine/client
+            marks = _visemes(clean, engine, used_voice, client)
+            return base64.b64encode(audio).decode("ascii"), marks
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in {"InvalidVoiceIdException","LanguageNotSupportedException","ValidationException","EngineNotSupportedException","InvalidSsmlException"}:
+                last_exc = e; continue
+            raise
+    if last_exc: raise last_exc
+    audio, engine, used_voice, client = _synthesize_ssml(ssml, POLLY_VOICE)
     marks = _visemes(clean, engine, used_voice, client)
     return base64.b64encode(audio).decode("ascii"), marks
 
@@ -537,6 +621,54 @@ def tts(payload: TTSIn):
         raise HTTPException(500, f"Polly error: {code} - {msg}")
     except Exception as e:
         raise HTTPException(500, f"TTS failure: {e.__class__.__name__}")
+@app.post("/api/sing")
+def sing(payload: SingIn):
+    txt = (payload.text or "").strip()
+    if not txt:
+        raise HTTPException(400, "Provide lyrics to sing.")
+    # This feature uses user-provided lyrics. We do not fetch or provide copyrighted lyrics.
+    try:
+        # Cache key includes a 'sing:' prefix
+        norm_txt = re.sub(r"\s+", " ", txt).strip().lower()
+        lang_key = (payload.lang or "").strip().lower()
+        mode_key = (payload.mode or "").strip().lower()
+        key = f"sing:{lang_key}|{mode_key}|{norm_txt}"
+        cached = _tts_cache_get(key)
+        if cached:
+            audio_b64, marks = cached
+            return {"audio_b64": audio_b64, "marks": marks}
+
+        acquired = _tts_gate.acquire(timeout=10)
+        if not acquired:
+            raise HTTPException(429, "TTS busy, try again shortly")
+        try:
+            last_err = None
+            for attempt in range(3):
+                try:
+                    audio_b64, marks = polly_sing_with_visemes(txt, payload.lang, payload.mode or 'auto')
+                    _tts_cache_put(key, audio_b64, marks)
+                    break
+                except ClientError as e:
+                    code = e.response.get("Error", {}).get("Code", "ClientError")
+                    if code in {"ThrottlingException","TooManyRequestsException","ServiceUnavailableException"}:
+                        last_err = e; _retry_sleep(attempt); continue
+                    raise
+                except Exception as e:
+                    last_err = e; _retry_sleep(attempt)
+            else:
+                raise last_err or RuntimeError("SING retries exhausted")
+        finally:
+            try: _tts_gate.release()
+            except Exception: pass
+        return {"audio_b64": audio_b64, "marks": marks}
+    except ClientError as e:
+        err = e.response.get("Error", {})
+        code = err.get("Code", "ClientError")
+        msg = err.get("Message", "")
+        logger.error("Polly error %s: %s", code, msg)
+        raise HTTPException(500, f"Polly error: {code} - {msg}")
+    except Exception as e:
+        raise HTTPException(500, f"Sing failure: {e.__class__.__name__}")
 
 @app.get("/api/polly/voices")
 def list_voices():
