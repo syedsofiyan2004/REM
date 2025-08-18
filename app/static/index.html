@@ -13,21 +13,22 @@
 }
 </script>
 <style>
-  :root{ --fg:#f4f7ff; --glass:#0b1020cc; --line:#23314a; --green:#00d68f; }
+  :root{ --fg:#f4f7ff; --glass:#0b1020cc; --line:#23314a; --green:#00d68f; --bg:#0b0e14; }
   *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif}
-  html,body{height:100%;margin:0;background:#0b0e14;color:var(--fg);overflow:hidden}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden}
   #scene3d{position:fixed;inset:0;z-index:0;background:#0c0f18}
   #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,96vw);
-         display:flex;flex-direction:column;gap:12px;padding:18px;
+         display:flex;flex-direction:column;gap:12px;padding:18px;padding-bottom:96px; /* keep above voice bar */
          background:linear-gradient(180deg,#0b1020a0,#0b1020a0);backdrop-filter:blur(8px);
     border-left:1px solid #1e2a3f;z-index:2;
     transform:translateX(100%); transition:transform .25s ease}
   #panel.open{ transform:translateX(0) }
   #log{flex:1;min-height:0;overflow:auto;padding-right:6px}
-  .bubble{padding:12px 14px;border-radius:14px;margin:8px 0;border:1px solid #1e2a3f}
-  .user{background:#12233e}.bot{background:#151c2a}
+  .bubble{padding:14px 16px;border-radius:14px;margin:10px 0;border:1px solid #1e2a3f;line-height:1.5;overflow-wrap:anywhere}
+  .user{background:#0f223f}
+  .bot{background:#121a2a}
   .row{display:flex;gap:8px}
-  input,button{font:15px/1.2 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
+  input,button{font:16px/1.35 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
   input{flex:1;min-width:0} button{cursor:pointer;font-weight:600}
   button:hover{filter:brightness(1.06)} button:disabled{opacity:.55;cursor:not-allowed}
   #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:8px;
@@ -38,18 +39,25 @@
   #hambtn{position:fixed;top:16px;right:16px;z-index:3;padding:8px 10px;border-radius:10px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700}
   #subtitle{position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:2;
        max-width:min(70vw,900px); text-align:center; padding:10px 14px; border-radius:12px;
-       background:#0e1627cc; border:1px solid #23314a; color:#e9f2ff; opacity:0; transition:opacity .25s ease}
+       background:#0e1627f0; border:1px solid #23314a; color:#e9f2ff; text-shadow:0 1px 2px #000; opacity:0; transition:opacity .25s ease}
   #subtitle.show{ opacity:1 }
   #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
-    padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#b9c6db;
-    font-size:12.5px}
+    padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#c6d6ec;
+    font-size:13px}
+  /* Accessibility toggles */
+  body.large-text { font-size:18px }
+  body.large-text input, body.large-text button { font-size:18px }
+  body.high-contrast { --fg:#ffffff; --bg:#0a0d14 }
+  body.high-contrast .bubble { border-color:#35507a }
+  body.high-contrast .user { background:#0d2a52 }
+  body.high-contrast .bot  { background:#0f1930 }
   /* Mobile tweaks */
   @media (max-width: 768px){
     #panel{width:100vw; padding:14px}
     #badge{top:auto; bottom:calc(env(safe-area-inset-bottom, 0px) + 72px)}
     #subtitle{bottom:30%}
     #voicebar{left:8px; right:8px;}
-    input,button{font-size:16px} /* bigger tap targets */
+    input,button{font-size:17px} /* bigger tap targets */
   }
 </style>
 </head>
@@ -88,13 +96,15 @@
   <button id="sing">🎵 Sing</button>
   <button id="spicyBar" class="pill" title="Flirty but safe">🌶️ Spicy</button>
   <button id="cardBtnBar" class="pill" title="Quick knowledge card">🃏 Card</button>
+  <button id="textToggle" class="pill" title="Larger text">A+</button>
+  <button id="contrastToggle" class="pill" title="High contrast">HC</button>
     <select id="langsel" class="pill" title="TTS language">
       <option value="en" selected>English (Ruth)</option>
       <option value="es">Español (España)</option>
       <option value="es-mx">Español (México)</option>
       <option value="fr">Français (France)</option>
       <option value="fr-ca">Français (Canada)</option>
-      <option value="hi">हिंदी</option>
+      <option value="hi">हिंदी (India)</option>
     </select>
   <button id="pttToggle" class="pill" title="Push-to-talk (hold Space)">PTT: Off</button>
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
@@ -123,6 +133,8 @@ const langSel   = document.getElementById('langsel');
 const spicyBar  = document.getElementById('spicyBar');
 const cardBtnBar= document.getElementById('cardBtnBar');
 const pttToggle = document.getElementById('pttToggle');
+const textToggle = document.getElementById('textToggle');
+const contrastToggle = document.getElementById('contrastToggle');
 const micdot    = document.getElementById('micdot');
 const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
@@ -151,6 +163,13 @@ rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bo
 rxBar.style.display='flex'; rxBar.style.gap='6px';
 reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
 document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
+// Restore accessibility prefs
+try{
+  const lt = localStorage.getItem('pref-large-text') === '1';
+  const hc = localStorage.getItem('pref-high-contrast') === '1';
+  document.body.classList.toggle('large-text', lt);
+  document.body.classList.toggle('high-contrast', hc);
+}catch{}
 
 /* ====== log ====== */
 function add(text, who){
@@ -801,6 +820,18 @@ for (const b of styleButtons()){
     showSubtitle(`Mode: ${selectedStyle||'default'}`, 1500);
   });
 }
+
+// Accessibility toggles
+textToggle?.addEventListener('click', ()=>{
+  const on = !document.body.classList.contains('large-text');
+  document.body.classList.toggle('large-text', on);
+  try{ localStorage.setItem('pref-large-text', on ? '1' : '0'); }catch{}
+});
+contrastToggle?.addEventListener('click', ()=>{
+  const on = !document.body.classList.contains('high-contrast');
+  document.body.classList.toggle('high-contrast', on);
+  try{ localStorage.setItem('pref-high-contrast', on ? '1' : '0'); }catch{}
+});
 
 // Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
 ['pointerdown','keydown'].forEach(evt=>{

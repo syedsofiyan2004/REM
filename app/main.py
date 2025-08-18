@@ -234,12 +234,27 @@ def _normalize_lang(lang: Optional[str]) -> Optional[str]:
 
 def make_ssml(text: str, lang: Optional[str] = None) -> str:
     import re as _re
+    # Sentence-level phrasing with short breaks for natural pacing
     sents = [html.escape(s.strip()) for s in _re.split(r'(?<=[.!?])\s+', text) if s.strip()]
     inner = "<break time='80ms'/>".join(f"<s>{s}</s><break time='120ms'/>" for s in sents)
+
+    # Language-aware pacing
+    def _rate_pitch_for_lang(l: Optional[str]):
+        rate, pitch = POLLY_RATE, POLLY_PITCH
+        n = _normalize_lang(l) or ""
+        if n.startswith("es-") or n == "es-ES":
+            rate = "-10%"  # Spanish a bit slower
+        elif n.startswith("fr-") or n == "fr-FR":
+            rate = "-10%"  # French a bit slower
+        elif n.startswith("hi-") or n == "hi-IN":
+            rate = "-5%"   # Slightly slower Hindi
+        return rate, pitch
+
+    rate, pitch = _rate_pitch_for_lang(lang)
     lang_norm = _normalize_lang(lang)
     if lang_norm:
-        return f"<speak><lang xml:lang='{lang_norm}'><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></lang></speak>"
-    return f"<speak><prosody rate='{POLLY_RATE}' pitch='{POLLY_PITCH}'>{inner}</prosody></speak>"
+        return f"<speak><lang xml:lang='{lang_norm}'><prosody rate='{rate}' pitch='{pitch}'>{inner}</prosody></lang></speak>"
+    return f"<speak><prosody rate='{rate}' pitch='{pitch}'>{inner}</prosody></speak>"
 
 def make_sing_ssml(text: str, lang: Optional[str] = None) -> str:
     """A playful singing SSML: slower rate, gentle vibrato-like pitch changes, clear phrasing.
@@ -258,9 +273,18 @@ def make_sing_ssml(text: str, lang: Optional[str] = None) -> str:
             parts.append(f"<prosody pitch='{p}%'>" + html.escape(w) + "</prosody>")
             i += 1
     inner = "".join(parts)
-    # Slower rate and phrasing
-    body = f"<prosody rate='slow'>{inner}</prosody>"
-    lang_norm = _normalize_lang(lang)
+
+    # Language-aware base rate for singing
+    lang_norm = _normalize_lang(lang) or ""
+    base_rate = "-12%"
+    if lang_norm.startswith("es-") or lang_norm == "es-ES":
+        base_rate = "-18%"
+    elif lang_norm.startswith("fr-") or lang_norm == "fr-FR":
+        base_rate = "-16%"
+    elif lang_norm.startswith("hi-") or lang_norm == "hi-IN":
+        base_rate = "-10%"
+
+    body = f"<prosody rate='{base_rate}'>{inner}</prosody>"
     if lang_norm:
         return f"<speak><lang xml:lang='{lang_norm}'>{body}</lang></speak>"
     return f"<speak>{body}</speak>"
