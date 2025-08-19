@@ -1,9 +1,10 @@
 .env
 venv
 __pycache__
-__init__.py
 infra
 README_DEPLOY.md
-.dockerignore
+# allow committing .dockerignore so Docker builds use it
+# (remove the next line if present)
+# .dockerignore
 terraform.tfstate
 terraform.tfstate.backup
