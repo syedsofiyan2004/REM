@@ -512,10 +512,20 @@ def polly_sing_with_visemes(text: str, lang: Optional[str] = None, mode: Optiona
     last_exc = None
     for v in candidates:
         try:
-            audio, engine, used_voice, client = _synthesize_ssml(ssml, v)
-            # For visemes, use the clean text (not SSML) with the same engine/client
-            marks = _visemes(clean, engine, used_voice, client)
-            return base64.b64encode(audio).decode("ascii"), marks
+            # Try singing SSML first
+            try:
+                audio, engine, used_voice, client = _synthesize_ssml(ssml, v)
+                marks = _visemes(clean, engine, used_voice, client)
+                return base64.b64encode(audio).decode("ascii"), marks
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                # Graceful fallback: if SSML is invalid or not supported, use regular TTS SSML
+                if code in {"InvalidSsmlException", "ValidationException"}:
+                    audio2, engine2, used_voice2, client2 = _synthesize_audio(clean, v, lang)
+                    marks2 = _visemes(clean, engine2, used_voice2, client2)
+                    return base64.b64encode(audio2).decode("ascii"), marks2
+                else:
+                    raise
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code in {"InvalidVoiceIdException","LanguageNotSupportedException","ValidationException","EngineNotSupportedException","InvalidSsmlException"}:

@@ -160,24 +160,6 @@ const styleButtons = () => Array.from(document.querySelectorAll('#panel .pill.st
 // Typing indicator
 let typingEl; (function(){ typingEl = document.createElement('div'); typingEl.className='bubble bot'; typingEl.textContent='…'; typingEl.style.opacity='0.6'; })();
 let selectedStyle = null;
-// Reaction chips UI (floating emoji near subtitle)
-const reactions = ['👏','😂','😮','😅','😍','👍','🙏'];
-function floatReaction(emoji){
-  const el = document.createElement('div');
-  el.textContent = emoji; el.style.position='fixed'; el.style.zIndex='3';
-  const rect = subtitle.getBoundingClientRect();
-  el.style.left = (rect.left + rect.width/2 + (Math.random()*60-30))+'px';
-  el.style.top = (rect.top - 10 + (Math.random()*20-10))+'px';
-  el.style.fontSize='28px'; el.style.transition='transform 1s ease, opacity 1s ease';
-  document.body.appendChild(el);
-  requestAnimationFrame(()=>{ el.style.transform='translateY(-50px)'; el.style.opacity='0'; });
-  setTimeout(()=>{ el.remove(); }, 1100);
-}
-const rxBar = document.createElement('div'); rxBar.style.position='fixed'; rxBar.style.zIndex='3';
-rxBar.style.left='46%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='32%';
-rxBar.style.display='flex'; rxBar.style.gap='6px';
-reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
-document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
 // Restore accessibility prefs (kept via body classes; toggles removed from bar)
 try{
   const lt = localStorage.getItem('pref-large-text') === '1';
@@ -817,16 +799,7 @@ for (const b of styleButtons()){
 
 // Removed extra bar toggles and what's-new toast wiring
 
-// Adjust reaction bar position when panel opens/closes to reduce collisions
-function adjustRxBar(){
-  const open = panelEl.classList.contains('open');
-  if(open){ rxBar.style.left='32%'; rxBar.style.bottom='36%'; }
-  else { rxBar.style.left='46%'; rxBar.style.bottom='32%'; }
-}
-// Hook panel toggle
-hambtn.addEventListener('click', ()=>{ setTimeout(adjustRxBar, 0); });
-// Initial
-adjustRxBar();
+// Reactions removed for a cleaner UI
 
 // Zoom controls
 function dolly(f){
