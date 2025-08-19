@@ -72,6 +72,15 @@ def root():
 def health():
     return {"ok": True}
 
+@app.get("/api/version")
+def version():
+    return {
+        "image_tag": os.getenv("IMAGE_TAG", "unknown"),
+        "bedrock_model": BEDROCK_MODEL,
+        "polly_region": POLLY_REGION,
+        "polly_voice": POLLY_VOICE,
+    }
+
 # ---- rolling memory (per session_id) ----------------------------------------
 MAX_TURNS = 10  # user+assistant pairs
 _history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=MAX_TURNS*2))
