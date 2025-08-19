@@ -31,8 +31,9 @@
   input,button,select{font:16px/1.35 inherit;padding:12px 14px;border-radius:14px;border:1px solid #1e2a3f;background:#101827;color:var(--fg)}
   input{flex:1;min-width:0} button{cursor:pointer;font-weight:600}
   button:hover{filter:brightness(1.06)} button:disabled{opacity:.55;cursor:not-allowed}
-  #voicebar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:flex;align-items:center;gap:10px;
-            background:var(--glass);border:1px solid #1e2a3f;padding:10px 12px;border-radius:14px;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}
+  #voicebar{position:fixed;left:12px;bottom:calc(env(safe-area-inset-bottom, 0px) + 12px);z-index:2;display:inline-flex;align-items:center;gap:8px;
+            background:var(--glass);border:1px solid #1e2a3f;padding:8px 10px;border-radius:12px;flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;
+            max-width:min(70vw, 820px)}
   .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:var(--pill);border:1px solid var(--pillBorder);font-size:13px;color:#eaf2ff}
   .pill:focus-visible{outline:2px solid var(--green)}
   select.pill{appearance:none;background:var(--pill);color:#eaf2ff}
@@ -62,7 +63,7 @@
     #panel{width:100vw; padding:14px}
     #badge{top:auto; bottom:calc(env(safe-area-inset-bottom, 0px) + 72px)}
     #subtitle{bottom:36%}
-    #voicebar{left:8px; right:8px;}
+  #voicebar{left:8px; max-width:86vw;}
     input,button{font-size:17px} /* bigger tap targets */
     /* Hide zoom controls on small screens to avoid overlaps */
     #zoombar{display:none}
@@ -585,11 +586,27 @@ function speakWithBrowser(sentence){
   });
 }
 
+// Strip labels (e.g., "Title:", "Chorus -") and stage cues like [smiles] from captions/TTs
+function sanitizeCaption(input){
+  let s = String(input||'');
+  // Remove square-bracket stage directions entirely
+  s = s.replace(/\[[^\]]*\]/g, ' ');
+  // Remove short parenthetical cues like (smiles), (laughs), (beat)
+  s = s.replace(/\(([^)]{1,24})\)/g, (m, inner)=> (/^[a-zA-Z\s]+$/.test(inner) ? ' ' : m));
+  // Remove leading labels like Title:, Summary:, Chorus -, Verse —, etc.
+  s = s.replace(/^\s*(?:title|subtitle|summary|note|action|directions?|stage|heading|scene|lyrics|chorus|verse|bridge|intro|outro)\s*:\s*/i, '');
+  s = s.replace(/^\s*(?:title|subtitle|summary|note|action|directions?|stage|heading|scene|lyrics|chorus|verse|bridge|intro|outro)\s*[-–—]\s*/i, '');
+  // Collapse whitespace and stray punctuation from removals
+  s = s.replace(/\s{2,}/g, ' ').replace(/\s+([,.;:!?])/g, '$1').trim();
+  return s;
+}
+
 function enqueueSpeak(sentence){
   const s = (sentence||'').trim(); if(!s) return;
+  const cleaned = sanitizeCaption(s); if(!cleaned) return;
   speakQ = speakQ.then(async ()=>{
     try{
-      const {audio_b64, marks} = await ttsFull(s);
+      const {audio_b64, marks} = await ttsFull(cleaned);
       if(!audio_b64){ throw new Error('no-audio'); }
       await playAudioWithVisemes(audio_b64, marks || []);
     }catch(e){
@@ -602,7 +619,9 @@ function enqueueSpeak(sentence){
 
 /* ====== Subtitles + panel toggle ====== */
 let subTimer; function showSubtitle(text, ttl=4000){
-  subtitle.textContent = text; subtitle.classList.add('show');
+  const t = sanitizeCaption(text);
+  if(!t){ subtitle.classList.remove('show'); return; }
+  subtitle.textContent = t; subtitle.classList.add('show');
   if(subTimer) clearTimeout(subTimer);
   subTimer = setTimeout(()=>subtitle.classList.remove('show'), ttl);
 }
