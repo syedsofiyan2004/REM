@@ -6,6 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
+ARG APP_BUILD=unknown
+ENV APP_BUILD=${APP_BUILD}
 
 # System deps (keep minimal)
 RUN apt-get update -y && apt-get install -y --no-install-recommends \

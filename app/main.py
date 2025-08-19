@@ -76,6 +76,7 @@ def health():
 def version():
     return {
         "image_tag": os.getenv("IMAGE_TAG", "unknown"),
+    "build": os.getenv("APP_BUILD", "unknown"),
         "bedrock_model": BEDROCK_MODEL,
         "polly_region": POLLY_REGION,
         "polly_voice": POLLY_VOICE,
