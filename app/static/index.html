@@ -43,6 +43,9 @@
        max-width:min(70vw,900px); text-align:center; padding:10px 14px; border-radius:12px;
        background:#0e1627f0; border:1px solid #23314a; color:#e9f2ff; text-shadow:0 1px 2px #000; opacity:0; transition:opacity .25s ease}
   #subtitle.show{ opacity:1 }
+  /* Zoom toolbar */
+  #zoombar{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom, 0px) + 100px);z-index:3;display:flex;flex-direction:column;gap:8px}
+  #zoombar button{padding:8px 10px;border-radius:10px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700;color:var(--fg)}
   #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
     padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#c6d6ec;
     font-size:13px}
@@ -78,6 +81,11 @@
       <input id="inp" placeholder="Say something…" />
       <button id="send">Send</button>
     </div>
+    <div style="font-weight:700;letter-spacing:.4px;margin-top:6px">Sing</div>
+    <div class="row">
+      <input id="singinp" placeholder="Type lyrics for singing…" />
+      <button id="singGo">Sing</button>
+    </div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
   <button class="pill" data-say="Tell me a short story about kindness.">💡 Story</button>
   <button class="pill" data-say="Guide me through a 30-second breathing exercise.">🧘 Breathe</button>
@@ -107,6 +115,13 @@
     <span class="pill"><span id="micdot" class="dot"></span><span id="miclabel">Idle</span></span>
   </div>
 
+  <!-- Zoom controls -->
+  <div id="zoombar" aria-label="Viewport zoom controls">
+    <button id="zoomIn" title="Zoom in">＋</button>
+    <button id="zoomOut" title="Zoom out">－</button>
+    <button id="zoomReset" title="Reset view">⟳</button>
+  </div>
+
 
 <script type="module">
 const RPM_AVATAR_URL =
@@ -132,6 +147,11 @@ const miclabel  = document.getElementById('miclabel');
 const panelEl   = document.getElementById('panel');
 const hambtn    = document.getElementById('hambtn');
 const subtitle  = document.getElementById('subtitle');
+const singInp   = document.getElementById('singinp');
+const singGoBtn = document.getElementById('singGo');
+const zoomInBtn = document.getElementById('zoomIn');
+const zoomOutBtn= document.getElementById('zoomOut');
+const zoomReset = document.getElementById('zoomReset');
 const suggestionButtons = () => Array.from(document.querySelectorAll('#panel .pill[data-say]'));
 const styleButtons = () => Array.from(document.querySelectorAll('#panel .pill.style'));
 // Typing indicator
@@ -225,7 +245,7 @@ async function init3D(url){
 
   controls = new OrbitControls(camera, renderer.domElement);
   // Allow user zoom in/out with mouse wheel or pinch
-  controls.enableZoom = true; controls.zoomSpeed = 0.6; controls.enablePan = false;
+  controls.enableZoom = true; controls.zoomSpeed = 0.7; controls.enablePan = false;
   controls.minDistance = 0.8; controls.maxDistance = 6;
 
   clock = new THREE.Clock();
@@ -744,15 +764,27 @@ stopBtn.onclick = ()=>{
 // Language selection
 langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
 // Removed PTT/test controls to simplify UI
-// Sing: takes user-provided lyrics only and sings a short snippet
+// Sing: use the dedicated Sing input so it doesn't mix with chat prompt
 singBtn.onclick = async ()=>{
-  const lyrics = inp.value.trim(); if(!lyrics){ add('Type a short lyric line first (no copyrighted text fetched).','bot'); return; }
+  panelEl.classList.add('open');
+  singInp?.focus();
+  const lyrics = (singInp?.value||'').trim();
+  if(!lyrics){ return; }
   stopSpeaking();
   try{
     const {audio_b64, marks} = await singOnce(lyrics);
     await playAudioWithVisemes(audio_b64, marks||[]);
   }catch(e){ console.warn(e); }
 };
+singGoBtn?.addEventListener('click', async ()=>{
+  const lyrics = (singInp?.value||'').trim();
+  if(!lyrics){ add('Type lyrics in the Sing box.','bot'); return; }
+  stopSpeaking();
+  try{
+    const {audio_b64, marks} = await singOnce(lyrics);
+    await playAudioWithVisemes(audio_b64, marks||[]);
+  }catch(e){ console.warn(e); }
+});
 
 // Suggestions chips
 for (const b of suggestionButtons()){
@@ -786,6 +818,25 @@ for (const b of styleButtons()){
 }
 
 // Removed extra bar toggles and what's-new toast wiring
+
+// Zoom controls
+function dolly(f){
+  try{
+    if(controls && typeof controls.dollyIn === 'function'){
+      if(f>1){ controls.dollyIn(f); } else { controls.dollyOut(1/f); }
+      controls.update(); return;
+    }
+  }catch{}
+  try{
+    const to = new THREE.Vector3();
+    to.copy(controls?.target || new THREE.Vector3(0,0,0));
+    const v = new THREE.Vector3().subVectors(camera.position, to).multiplyScalar(1/f);
+    camera.position.copy(v.add(to)); camera.updateProjectionMatrix(); controls?.update();
+  }catch{}
+}
+zoomInBtn?.addEventListener('click', ()=> dolly(1.2));
+zoomOutBtn?.addEventListener('click', ()=> dolly(1/1.2));
+zoomReset?.addEventListener('click', ()=>{ try{ controls.reset(); }catch{}; try{ if(root) frameObject(root); }catch{} });
 
 // Try to unlock/resume audio on any user gesture, to avoid autoplay gating after interruptions
 ['pointerdown','keydown'].forEach(evt=>{
