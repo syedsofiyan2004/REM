@@ -106,6 +106,7 @@
   <div id="voicebar">
     <button id="mic">🎙️ Start Voice</button>
     <button id="stop" disabled>⏹️ Stop</button>
+  <button id="pttbtn" class="pill" title="Hold Space to talk when enabled">PTT</button>
   <button id="sing">🎵 Sing</button>
     <select id="langsel" class="pill" title="TTS language">
       <option value="en" selected>English (Ruth)</option>
@@ -492,7 +493,7 @@ async function singOnce(text){
 let speaking=false, currentAudio=null, audioCtx=null, raf=null;
 let curStreamCtrl = null; // abort controller for active chat_stream
 // Mic echo control
-let autoResumeMic = false;          // set true when we pause mic for TTS and should auto-resume afterward
+let autoResumeMic = false;          // deprecated: we no longer pause mic during TTS
 let suppressASRUntil = 0;           // timestamp (performance.now) to ignore ASR results until after TTS ends
 function stopSpeaking(){
   speaking=false;
@@ -515,11 +516,8 @@ function visemeToOpen(v){ return (VMAP[v] ?? 0.35); }
 async function playAudioWithVisemes(b64, marks){
   return new Promise(async (resolve, reject)=>{
     stopSpeaking(); speaking=true;
-    // Auto-pause mic during TTS to avoid echo loop; remember to resume afterward
-    if(listening && recog){
-      autoResumeMic = true;
-      try{ stopMic(/*silent*/true); }catch{}
-    }
+  // Keep mic active; just suppress ASR results while speaking
+  suppressASRUntil = Number.POSITIVE_INFINITY;
     const audio = new Audio('data:audio/mp3;base64,'+b64); currentAudio=audio;
 
     let cleaned=false;
@@ -530,12 +528,8 @@ async function playAudioWithVisemes(b64, marks){
       try{ audio.pause(); audio.src=''; }catch{}
       try{ if(audioCtx){ audioCtx.close(); } }catch{}
       audioCtx = null; currentAudio = null; speaking = false;
-      // After TTS ends, ignore ASR results briefly and auto-resume mic if we paused it
-      suppressASRUntil = performance.now() + 700;
-      if(autoResumeMic){
-        autoResumeMic = false;
-        try{ startMic(); }catch{}
-      }
+  // After TTS ends, ignore ASR results briefly
+  suppressASRUntil = performance.now() + 700;
       endOk ? resolve() : reject(new Error('audio-playback-failed'));
     };
 
@@ -721,7 +715,7 @@ function startMic(){
   r.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); try{ beep(820,120); }catch{} };
   r.onresult = (ev)=>{
     // Ignore any recognition results for a brief window after TTS ends
-    if(performance.now() < suppressASRUntil){ return; }
+  if(speaking || performance.now() < suppressASRUntil){ return; }
     let gotFinal = false;
     for(let i=ev.resultIndex;i<ev.results.length;i++){
       const rr=ev.results[i]; if(rr.isFinal){ buffer += ' '+rr[0].transcript; gotFinal=true; }
@@ -746,6 +740,32 @@ stopBtn.onclick = ()=>{
   try{ if(recog) recog.stop(); }catch{}
   stopSpeaking();
 };
+// PTT toggle button
+const pttBtn = document.getElementById('pttbtn');
+function updatePttBtn(){
+  if(!pttBtn) return;
+  pttBtn.style.outline = ptt.enabled ? '2px solid var(--green)' : '';
+  pttBtn.textContent = ptt.enabled ? 'PTT • On' : 'PTT';
+}
+pttBtn?.addEventListener('click', ()=>{ ptt.enabled = !ptt.enabled; updatePttBtn(); try{ localStorage.setItem('pref-ptt', ptt.enabled?'1':'0'); }catch{} });
+// Restore PTT pref
+try{ ptt.enabled = localStorage.getItem('pref-ptt')==='1'; }catch{}
+updatePttBtn();
+// PTT keyboard: hold Space to talk
+window.addEventListener('keydown', (e)=>{
+  if(!ptt.enabled) return;
+  if(e.key === ' ' && !e.repeat){
+    // Start mic when space is pressed
+    if(!listening) startMic();
+  }
+}, {passive:true});
+window.addEventListener('keyup', (e)=>{
+  if(!ptt.enabled) return;
+  if(e.key === ' '){
+    // Stop mic when space is released
+    if(listening) stopMic();
+  }
+}, {passive:true});
 // Language selection
 langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
 // Removed PTT/test controls to simplify UI
