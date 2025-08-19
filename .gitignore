@@ -2,7 +2,6 @@
 venv
 __pycache__
 __init__.py
-Dockerfile
 infra
 README_DEPLOY.md
 .dockerignore
