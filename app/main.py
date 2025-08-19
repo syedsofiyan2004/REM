@@ -20,12 +20,11 @@ try:
 except Exception:
     from persona_prompts import PERSONA_BLESSED_BOY
 
-# ---- env (keep your current defaults) ---------------------------------------
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "ap-south-1")
 BEDROCK_MODEL  = os.getenv("BEDROCK_MODEL",  "anthropic.claude-3-haiku-20240307-v1:0")
 POLLY_REGION   = os.getenv("POLLY_REGION",   "ap-south-1")
 POLLY_FALLBACK_REGION = os.getenv("POLLY_FALLBACK_REGION", "us-east-1")
-POLLY_VOICE    = os.getenv("POLLY_VOICE",    "Ruth")   # will auto-fallback if region lacks Ruth
+POLLY_VOICE    = os.getenv("POLLY_VOICE",    "Ruth")
 POLLY_RATE     = os.getenv("POLLY_RATE",     "medium")
 POLLY_PITCH    = os.getenv("POLLY_PITCH",    "+4%")
 
