@@ -447,7 +447,7 @@ async function ttsFull(text){
   for(let attempt=0; attempt<3; attempt++){
     try{
   const ctrl = new AbortController(); curTtsCtrl = ctrl;
-  const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 15000);
+  const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 30000);
       const r = await fetch('/api/tts',{
         method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ttsPayload(text)), signal: ctrl.signal
       });
@@ -472,7 +472,7 @@ async function singOnce(text){
   for(let attempt=0; attempt<3; attempt++){
     try{
       const ctrl = new AbortController(); curTtsCtrl = ctrl;
-      const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 15000);
+  const timeout = setTimeout(()=>{ try{ ctrl.abort(); }catch{} }, 30000);
       const r = await fetch('/api/sing',{
         method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ttsPayload(text)), signal: ctrl.signal
       });
@@ -529,8 +529,8 @@ async function playAudioWithVisemes(b64, marks){
       try{ audio.pause(); audio.src=''; }catch{}
       try{ if(audioCtx){ audioCtx.close(); } }catch{}
       audioCtx = null; currentAudio = null; speaking = false;
-  // After TTS ends, ignore ASR results briefly
-  suppressASRUntil = performance.now() + 700;
+  // After TTS ends, ignore ASR results briefly (slightly longer to avoid overlap)
+  suppressASRUntil = performance.now() + 1000;
       endOk ? resolve() : reject(new Error('audio-playback-failed'));
     };
 
@@ -644,7 +644,7 @@ async function talk(text){
     // Add a client-side timeout to avoid hanging streams
     const streamCtrl = new AbortController();
     curStreamCtrl = streamCtrl;
-    const streamTimeout = setTimeout(()=>{ try{ streamCtrl.abort(); }catch{} }, 20000);
+  const streamTimeout = setTimeout(()=>{ try{ streamCtrl.abort(); }catch{} }, 40000);
   const r = await fetch('/api/chat_stream', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:q, session_id:'local-1', style: selectedStyle}), signal: streamCtrl.signal});
     if(!r.ok){ throw new Error('stream-status-'+r.status); }
     const reader = r.body.getReader(); let leftover='';
@@ -734,6 +734,7 @@ function startMic(){
   r.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); try{ beep(820,120); }catch{} };
   r.onresult = (ev)=>{
     // Ignore any recognition results for a brief window after TTS ends
+  // Don't interrupt active TTS mid-utterance
   if(speaking || performance.now() < suppressASRUntil){ return; }
     let gotFinal = false;
     for(let i=ev.resultIndex;i<ev.results.length;i++){
@@ -828,11 +829,13 @@ document.getElementById('cardBtn')?.addEventListener('click', async ()=>{
 // Style chips (Grok-like persona modes)
 for (const b of styleButtons()){
   b.addEventListener('click', ()=>{
-    selectedStyle = b.getAttribute('data-style') || null;
+  const chosen = b.getAttribute('data-style') || null;
+  // Toggle off if clicking the same style again
+  selectedStyle = (selectedStyle === chosen) ? null : chosen;
     // Visual toggle
     styleButtons().forEach(x=> x.style.outline = '');
-    b.style.outline = '2px solid var(--green)';
-    showSubtitle(`Mode: ${selectedStyle||'default'}`, 1500);
+  if(selectedStyle){ b.style.outline = '2px solid var(--green)'; }
+  showSubtitle(`Mode: ${selectedStyle||'default'}`, 1500);
   });
 }
 
