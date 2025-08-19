@@ -44,7 +44,7 @@
        background:#0e1627f0; border:1px solid #23314a; color:#e9f2ff; text-shadow:0 1px 2px #000; opacity:0; transition:opacity .25s ease}
   #subtitle.show{ opacity:1 }
   /* Zoom toolbar */
-  #zoombar{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom, 0px) + 100px);z-index:3;display:flex;flex-direction:column;gap:8px}
+  #zoombar{position:fixed;left:16px;bottom:calc(env(safe-area-inset-bottom, 0px) + 100px);z-index:3;display:flex;flex-direction:column;gap:8px}
   #zoombar button{padding:8px 10px;border-radius:10px;border:1px solid #1e2a3f;background:var(--glass);font-weight:700;color:var(--fg)}
   #disclaimer{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:3;
     padding:8px 12px;border-radius:10px;border:1px solid #2a3a55;background:#0b1020e6;color:#c6d6ec;
@@ -64,7 +64,10 @@
     #subtitle{bottom:36%}
     #voicebar{left:8px; right:8px;}
     input,button{font-size:17px} /* bigger tap targets */
+    /* Hide zoom controls on small screens to avoid overlaps */
+    #zoombar{display:none}
   }
+  /* Zoom bar stays on the left to avoid panel overlap */
 </style>
 </head>
 <body>
@@ -83,7 +86,7 @@
     </div>
     <div style="font-weight:700;letter-spacing:.4px;margin-top:6px">Sing</div>
     <div class="row">
-      <input id="singinp" placeholder="Type lyrics for singing…" />
+      <input id="singinp" placeholder="Type lyrics for singing (not chat)…" />
       <button id="singGo">Sing</button>
     </div>
     <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
@@ -171,7 +174,7 @@ function floatReaction(emoji){
   setTimeout(()=>{ el.remove(); }, 1100);
 }
 const rxBar = document.createElement('div'); rxBar.style.position='fixed'; rxBar.style.zIndex='3';
-rxBar.style.left='50%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='28%';
+rxBar.style.left='46%'; rxBar.style.transform='translateX(-50%)'; rxBar.style.bottom='32%';
 rxBar.style.display='flex'; rxBar.style.gap='6px';
 reactions.forEach(e=>{ const b=document.createElement('button'); b.className='pill'; b.textContent=e; b.onclick=()=>floatReaction(e); rxBar.appendChild(b); });
 document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(rxBar));
@@ -765,26 +768,21 @@ stopBtn.onclick = ()=>{
 langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
 // Removed PTT/test controls to simplify UI
 // Sing: use the dedicated Sing input so it doesn't mix with chat prompt
-singBtn.onclick = async ()=>{
-  panelEl.classList.add('open');
-  singInp?.focus();
-  const lyrics = (singInp?.value||'').trim();
-  if(!lyrics){ return; }
-  stopSpeaking();
-  try{
-    const {audio_b64, marks} = await singOnce(lyrics);
-    await playAudioWithVisemes(audio_b64, marks||[]);
-  }catch(e){ console.warn(e); }
-};
-singGoBtn?.addEventListener('click', async ()=>{
+async function doSingFromInput(){
   const lyrics = (singInp?.value||'').trim();
   if(!lyrics){ add('Type lyrics in the Sing box.','bot'); return; }
   stopSpeaking();
   try{
     const {audio_b64, marks} = await singOnce(lyrics);
     await playAudioWithVisemes(audio_b64, marks||[]);
-  }catch(e){ console.warn(e); }
-});
+  }catch(e){ console.warn(e); add('Singing failed. Please try again.','bot'); }
+}
+singBtn.onclick = async ()=>{
+  panelEl.classList.add('open');
+  singInp?.focus();
+  if((singInp?.value||'').trim()){ doSingFromInput(); }
+};
+singGoBtn?.addEventListener('click', ()=>{ doSingFromInput(); });
 
 // Suggestions chips
 for (const b of suggestionButtons()){
@@ -818,6 +816,17 @@ for (const b of styleButtons()){
 }
 
 // Removed extra bar toggles and what's-new toast wiring
+
+// Adjust reaction bar position when panel opens/closes to reduce collisions
+function adjustRxBar(){
+  const open = panelEl.classList.contains('open');
+  if(open){ rxBar.style.left='32%'; rxBar.style.bottom='36%'; }
+  else { rxBar.style.left='46%'; rxBar.style.bottom='32%'; }
+}
+// Hook panel toggle
+hambtn.addEventListener('click', ()=>{ setTimeout(adjustRxBar, 0); });
+// Initial
+adjustRxBar();
 
 // Zoom controls
 function dolly(f){
