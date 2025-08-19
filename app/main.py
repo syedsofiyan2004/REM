@@ -289,38 +289,56 @@ def make_sing_ssml(text: str, lang: Optional[str] = None) -> str:
     Polly can't truly sing; this simulates melody with pitch steps and pacing.
     """
     import re as _re
-    # Split into phrases (keep simple, musical rests between them)
-    phrases = [p.strip() for p in _re.split(r"[.!?;,]\s*", (text or "").strip()) if p]
+    # Split into lines and phrases; keep musical rests between phrases
+    lines = _re.split(r"\n+", (text or "").strip())
+    phrases: List[str] = []
+    for line in lines:
+        phrases.extend([p.strip() for p in _re.split(r"[.!?;,]\s*", line) if p.strip()])
+
+    # Slightly varied contours to avoid feeling repetitive
     contours = [
-        [+2, +4, +6, +8, +10,  +8,  +6,  +4],
-        [+3, +6, +9, +6,  +3,   0,  +2,  +4],
-        [+1, +3, +5, +7,  +9, +11,  +9,  +7],
+        [+2, +5, +9,  +7, +4,  +2,  0,  +3],
+        [+1, +3, +6,  +8, +10, +8, +5, +2],
+        [ 0, +2, +4,  +7, +9,  +7, +4, +1],
     ]
-    parts: List[str] = []
+
+    def _stylize_word(tok: str, step: int) -> str:
+        t = html.escape(tok)
+        # Emulate sustained vowels for longer words
+        if len(tok) >= 7 and any(v in tok.lower() for v in "aeiou"):
+            return f"<prosody pitch='{step}%'><prosody rate='-10%'>{t}</prosody></prosody>"
+        return f"<prosody pitch='{step}%'>{t}</prosody>"
+
+    parts: List[str] = ["<amazon:auto-breaths>\n"]
     for idx, ph in enumerate(phrases):
         tokens = [t for t in _re.split(r"(\s+)", ph) if t]
         contour = contours[idx % len(contours)]
         k = 0
+        # Add a touch of emphasis to phrase starts
+        parts.append("<emphasis level='moderate'>")
         for tok in tokens:
             if tok.isspace():
                 parts.append(tok)
             else:
                 pitch = contour[k % len(contour)]
-                parts.append(f"<prosody pitch='{pitch}%'>" + html.escape(tok) + "</prosody>")
+                parts.append(_stylize_word(tok, pitch))
                 k += 1
+        parts.append("</emphasis>")
         # small rest at end of phrase
-        parts.append("<break time='220ms'/>")
+        parts.append("<break time='260ms'/>")
+    parts.append("\n</amazon:auto-breaths>")
+
     inner = "".join(parts) or html.escape(text)
 
-    # Language-aware base rate for singing
+    # Language-aware base rate for singing (slower, musical)
     lang_norm = _normalize_lang(lang) or ""
-    base_rate = "-12%"
+    base_rate = "-15%"
     if lang_norm.startswith("es-") or lang_norm == "es-ES":
-        base_rate = "-18%"
+        base_rate = "-20%"
     elif lang_norm.startswith("fr-") or lang_norm == "fr-FR":
-        base_rate = "-16%"
+        base_rate = "-18%"
     elif lang_norm.startswith("hi-") or lang_norm == "hi-IN":
-        base_rate = "-10%"
+        base_rate = "-12%"
 
     body = f"<prosody rate='{base_rate}'>{inner}</prosody>"
     if lang_norm:
@@ -506,7 +524,19 @@ def polly_tts_with_visemes(text: str, lang: Optional[str] = None, mode: Optional
     return base64.b64encode(audio).decode("ascii"), marks
 
 def polly_sing_with_visemes(text: str, lang: Optional[str] = None, mode: Optional[str] = None) -> Tuple[str, list]:
-    clean = strip_stage(text) or text
+    # Reject explicit lyrics (basic filter)
+    bad = re.compile(r"\b(fuck|shit|bitch|asshole|slut|whore|dick|pussy|cunt|rape|kill|suicide)\b", re.I)
+    if bad.search(text or ""):
+        raise HTTPException(400, "I can't sing these lyrics.")
+    # Normalize and lightly de-duplicate repeated lines
+    cleaned_lines = []
+    last = None
+    for line in (text or "").splitlines():
+        L = line.strip()
+        if L and L != last:
+            cleaned_lines.append(L)
+            last = L
+    clean = strip_stage("\n".join(cleaned_lines) or text) or text
     ssml = make_sing_ssml(clean, lang)
     candidates = _voice_candidates(lang, mode)
     last_exc = None
