@@ -18,7 +18,7 @@
   html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);overflow:hidden}
   #scene3d{position:fixed;inset:0;z-index:0;background:#0c0f18}
   #panel{position:fixed;right:0;top:0;height:100%;width:min(520px,96vw);
-         display:flex;flex-direction:column;gap:12px;padding:18px;padding-bottom:96px; /* keep above voice bar */
+         display:flex;flex-direction:column;gap:12px;padding:18px;padding-bottom:16px;
          background:linear-gradient(180deg,#0b1020a0,#0b1020a0);backdrop-filter:blur(8px);
     border-left:1px solid #1e2a3f;z-index:2;
     transform:translateX(100%); transition:transform .25s ease}
@@ -110,7 +110,8 @@
   <button id="pttbtn" class="pill" title="Hold Space to talk when enabled">PTT</button>
   <button id="sing">🎵 Sing</button>
     <select id="langsel" class="pill" title="TTS language">
-      <option value="en" selected>English (Ruth)</option>
+      <option value="auto" selected>Auto (detect)</option>
+      <option value="en">English (Ruth)</option>
       <option value="es">Español (España)</option>
       <option value="es-mx">Español (México)</option>
       <option value="fr">Français (France)</option>
@@ -435,9 +436,30 @@ try{
 
 /* ====== TTS with visemes ====== */
 let curTtsCtrl = null; // abort controller for active TTS fetch
-let selectedLang = 'en';
+let selectedLang = 'auto';
+let lastLangHint = 'en'; // remember last detected language for ASR
+function detectLang(s){
+  const t = (s||'').trim();
+  if(!t) return lastLangHint || 'en';
+  // Script check: Devanagari
+  if(/[\u0900-\u097F]/.test(t)) return 'hi';
+  const lower = t.toLowerCase();
+  const score = {en:0, es:0, fr:0};
+  [' the ',' and ',' you ',' hello',' hi '].forEach(w=>{ if(lower.includes(w)) score.en++; });
+  [' el ',' la ',' de ',' que ',' y ',' como ',' gracias',' por ',' puedo ',' hola '].forEach(w=>{ if(lower.includes(w)) score.es++; });
+  [' le ',' la ',' des ',' et ',' je ',' vous ',' bonjour',' merci',' avec '].forEach(w=>{ if(lower.includes(w)) score.fr++; });
+  if(/[áéíóúñ¡¿]/i.test(t)) score.es+=2;
+  if(/[àâçéèêëîïôùûüÿœ]/i.test(t)) score.fr+=2;
+  let best='en', bestV=-1; for(const k in score){ if(score[k]>bestV){ best=k; bestV=score[k]; } }
+  if(bestV<=0) return lastLangHint || 'en';
+  return best;
+}
 function ttsPayload(text){
-  const lang = selectedLang || 'en';
+  let lang = selectedLang || 'en';
+  if(lang === 'auto'){
+    lang = detectLang(text);
+    lastLangHint = lang || lastLangHint;
+  }
   const mode = lang !== 'en' ? 'auto' : null; // keep Ruth for English by default
   return { text, lang, mode };
 }
@@ -626,12 +648,23 @@ let subTimer; function showSubtitle(text, ttl=4000){
   subTimer = setTimeout(()=>subtitle.classList.remove('show'), ttl);
 }
 hambtn.onclick = ()=>{ panelEl.classList.toggle('open'); };
+// Close panel on outside click
+document.addEventListener('click', (ev)=>{
+  if(!panelEl.classList.contains('open')) return;
+  if(panelEl.contains(ev.target) || hambtn.contains(ev.target)) return;
+  panelEl.classList.remove('open');
+});
+// Close panel on Escape
+document.addEventListener('keydown', (ev)=>{
+  if(ev.key === 'Escape'){ panelEl.classList.remove('open'); }
+});
 
 /* ====== Streaming chat (with sentence-level TTS) ====== */
 async function talk(text){
   const myGen = ++talkGen;
   stopSpeaking();
   const q = (text||'').trim(); if(!q) return;
+  try{ lastLangHint = detectLang(q) || lastLangHint; }catch{}
   add(q,'user');
 
   const bubble = document.createElement('div'); bubble.className='bubble bot'; bubble.textContent=''; logEl.appendChild(bubble);
@@ -676,7 +709,7 @@ async function talk(text){
   try{ if(showedTyping){ typingEl.remove(); showedTyping=false; } }catch{}; clearTimeout(typingTimer);
   if(myGen !== talkGen){ clearTimeout(streamTimeout); curStreamCtrl = null; return; }
   clearTimeout(streamTimeout);
-  if(buf.trim()) { showSubtitle(buf.trim()); enqueueSpeak(buf.trim()); buf=''; }
+  if(buf.trim()) { showSubtitle(buf.trim()); try{ lastLangHint = detectLang(buf) || lastLangHint; }catch{}; enqueueSpeak(buf.trim()); buf=''; }
     await speakQ;
     curStreamCtrl = null;
   }catch(e){
@@ -708,6 +741,10 @@ let recog, localCtx;
 let listening = false; // track mic listening state
 let ptt = { enabled: false, key: ' ' }; // push-to-talk (Space)
 const ASR_LANGS = { en: 'en-US', es: 'es-ES', 'es-mx': 'es-MX', fr: 'fr-FR', 'fr-ca': 'fr-CA', hi: 'hi-IN' };
+function resolveAsrLang(){
+  if(selectedLang && selectedLang !== 'auto') return ASR_LANGS[selectedLang] || 'en-US';
+  return ASR_LANGS[lastLangHint] || 'en-US';
+}
 function beep(freq=880, ms=120){
   try{
     localCtx = localCtx || new (window.AudioContext||window.webkitAudioContext)();
@@ -729,7 +766,7 @@ function startMic(){
   if(!SpeechRecognition){ alert("Use Chrome/Edge for live speech. I can add Whisper fallback next."); return; }
   if(recog || listening){ return; }
   const r = new SpeechRecognition();
-  recog = r; r.lang = ASR_LANGS[selectedLang] || 'en-US'; r.interimResults=true; r.continuous=true;
+  recog = r; r.lang = resolveAsrLang(); r.interimResults=true; r.continuous=true;
   let buffer=''; let lastFinalAt=0; const DEBOUNCE_MS=250;
   r.onstart = ()=>{ micBtn.disabled=true; stopBtn.disabled=false; setListening(true); try{ beep(820,120); }catch{} };
   r.onresult = (ev)=>{
@@ -787,7 +824,13 @@ window.addEventListener('keyup', (e)=>{
   }
 }, {passive:true});
 // Language selection
-langSel.addEventListener('change', ()=>{ selectedLang = langSel.value || 'en'; });
+langSel.addEventListener('change', ()=>{
+  selectedLang = langSel.value || 'auto';
+  // If ASR is running, restart it to apply new language
+  try{
+    if(recog){ recog.stop(); setTimeout(()=>{ startMic(); }, 200); }
+  }catch{}
+});
 // Removed PTT/test controls to simplify UI
 // Sing: use the dedicated Sing input so it doesn't mix with chat prompt
 async function doSingFromInput(){
