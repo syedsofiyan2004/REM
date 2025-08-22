@@ -1,7 +1,7 @@
 {
   "version": 2,
   "routes": [
-    { "src": "/api/(.*)", "dest": "http://rem-alb-683282785.ap-south-1.elb.amazonaws.com/api/$1" },
-    { "src": "/(.*)",    "dest": "http://rem-alb-683282785.ap-south-1.elb.amazonaws.com/$1" }
+    { "src": "/api/(.*)", "dest": "http://rem-alb-2109241872.ap-south-1.elb.amazonaws.com/api/$1" },
+    { "src": "/(.*)",    "dest": "http://rem-alb-2109241872.ap-south-1.elb.amazonaws.com/$1" }
   ]
 }
